@@ -1,0 +1,439 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Sidebar } from '../components/layout/Sidebar';
+import { StatsCards } from '../components/dashboard/StatsCards';
+import { StaffAssignment } from '../components/dashboard/StaffAssignment';
+import { Bell, Search, User, X, PlayCircle, CheckCircle, XCircle, AlertTriangle, Package, Calendar, LogOut, ChevronDown } from 'lucide-react';
+import { SettingsPage } from './SettingsPage';
+
+import { BookingsPage } from './BookingsPage';
+import { StaffPage } from './StaffPage';
+import { InventoryPage } from './InventoryPage';
+import { ReportsPage } from './ReportsPage';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
+type BookingStatus = 'Pending' | 'In Progress' | 'Completed' | 'Cancelled';
+
+interface Booking {
+  id: string;
+  date: string;
+  customer: string;
+  vehicle: string;
+  service: string;
+  status: BookingStatus;
+  amount: string;
+  timeSlot?: string;
+}
+
+interface Notification {
+  id: string;
+  type: 'error' | 'warning' | 'info' | 'success';
+  title: string;
+  message: string;
+  time: string;
+  read: boolean;
+}
+
+interface DashboardProps {
+  user: { name: string; role: string; username: string };
+  onLogout: () => void;
+}
+
+// ─── Notifications Panel ──────────────────────────────────────────────────────
+const INITIAL_NOTIFICATIONS: Notification[] = [
+  { id: '1', type: 'error',   title: 'Low Stock Warning',  message: 'Michelin 205/55R16 running low — only 4 left.',           time: '2 min ago',  read: false },
+  { id: '2', type: 'warning', title: 'Pending Approvals',  message: '3 new large fleet bookings require manager approval.',     time: '15 min ago', read: false },
+  { id: '3', type: 'info',    title: 'New Booking',        message: 'Nimal Perera booked Wheel Alignment for tomorrow 10:00.', time: '1 hr ago',   read: false },
+  { id: '4', type: 'success', title: 'Service Completed',  message: 'BK-7828 marked as completed by Saman Perera.',            time: '2 hr ago',   read: true  },
+];
+
+function NotificationsPanel({ onClose }: { onClose: () => void }) {
+  const [notifications, setNotifications] = useState<Notification[]>(INITIAL_NOTIFICATIONS);
+  const dotColor = { error: 'bg-red-500', warning: 'bg-yellow-500', info: 'bg-blue-500', success: 'bg-green-500' };
+
+  return (
+    <div className="absolute right-0 top-full mt-2 w-80 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+      <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
+        <span className="text-white font-bold text-sm">Notifications</span>
+        <button onClick={() => setNotifications(n => n.map(x => ({ ...x, read: true })))}
+          className="text-xs text-[#FFD700] hover:underline transition-colors">Mark all read</button>
+      </div>
+      <div className="max-h-80 overflow-y-auto divide-y divide-neutral-800/50">
+        {notifications.length === 0 ? (
+          <div className="p-6 text-center text-neutral-500 text-sm">All caught up! 🎉</div>
+        ) : notifications.map(n => (
+          <div key={n.id} onClick={() => setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x))}
+            className={`px-4 py-3 flex items-start gap-3 cursor-pointer transition-colors ${n.read ? 'opacity-50' : 'hover:bg-neutral-800'}`}>
+            <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${dotColor[n.type]}`} />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-white">{n.title}</p>
+              <p className="text-xs text-neutral-500 mt-0.5 leading-relaxed">{n.message}</p>
+              <p className="text-xs text-neutral-600 mt-1">{n.time}</p>
+            </div>
+            <button onClick={e => { e.stopPropagation(); setNotifications(prev => prev.filter(x => x.id !== n.id)); }}
+              className="text-neutral-600 hover:text-white transition-colors flex-shrink-0 mt-0.5">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="px-4 py-2 border-t border-neutral-800">
+        <button onClick={onClose} className="w-full text-xs text-neutral-500 hover:text-white transition-colors py-1">Close</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Global Search ─────────────────────────────────────────────────────────────
+function GlobalSearch({ onNavigate }: { onNavigate: (tab: string) => void }) {
+  const [query,   setQuery]   = useState('');
+  const [results, setResults] = useState<Booking[]>([]);
+  const [open,    setOpen]    = useState(false);
+  const [loading, setLoading] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  useEffect(() => {
+    if (query.trim().length < 2) { setResults([]); setOpen(false); return; }
+    setLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const res  = await fetch(`${API_URL}/bookings?search=${encodeURIComponent(query)}&limit=5`);
+        const data = await res.json();
+        setResults(data.bookings || []);
+        setOpen(true);
+      } catch { setResults([]); }
+      finally { setLoading(false); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const clear = () => { setQuery(''); setOpen(false); setResults([]); };
+
+  return (
+    <div ref={ref} className="relative hidden md:block">
+      <Search className="absolute left-3 top-2.5 h-4 w-4 text-neutral-500" />
+      <input type="text" value={query} onChange={e => setQuery(e.target.value)}
+        onFocus={() => results.length > 0 && setOpen(true)}
+        placeholder="Global Search..."
+        className="bg-neutral-900 border border-neutral-800 rounded-full pl-9 pr-9 py-1.5 text-sm text-white focus:outline-none focus:border-[#FFD700] w-64 transition-all placeholder:text-neutral-600"
+      />
+      {query && (
+        <button onClick={clear} className="absolute right-3 top-2.5 text-neutral-500 hover:text-white transition-colors">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+      {open && (
+        <div className="absolute top-full mt-2 left-0 w-80 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+          {loading ? (
+            <div className="p-4 text-center text-neutral-500 text-sm">Searching...</div>
+          ) : results.length === 0 ? (
+            <div className="p-4 text-center text-neutral-500 text-sm">No results for "{query}"</div>
+          ) : (
+            <>
+              <div className="px-4 py-2 border-b border-neutral-800 text-xs text-neutral-500">
+                {results.length} result{results.length !== 1 ? 's' : ''} found
+              </div>
+              {results.map(b => (
+                <button key={b.id} onClick={() => { onNavigate('bookings'); clear(); }}
+                  className="w-full px-4 py-3 hover:bg-neutral-800 transition-colors text-left border-b border-neutral-800/50 last:border-0">
+                  <div className="flex justify-between items-center">
+                    <span className="text-white text-sm font-medium">{b.customer}</span>
+                    <span className="text-[10px] font-mono text-neutral-500">{b.id}</span>
+                  </div>
+                  <div className="text-xs text-neutral-500 mt-0.5">{b.service} · {b.date}</div>
+                </button>
+              ))}
+              <button onClick={() => { onNavigate('bookings'); clear(); }}
+                className="w-full px-4 py-2.5 text-xs text-[#FFD700] hover:bg-neutral-800 transition-colors font-medium text-center">
+                See all results in Bookings →
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Recent Bookings Table ─────────────────────────────────────────────────────
+function RecentBookingsTable({ onViewAll }: { onViewAll: () => void }) {
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [loading,  setLoading]  = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_URL}/bookings?limit=8`)
+      .then(r => r.json())
+      .then(d => setBookings(d.bookings || []))
+      .catch(() => setBookings([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const changeStatus = async (id: string, status: BookingStatus) => {
+    try {
+      await fetch(`${API_URL}/bookings/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b));
+    } catch { alert('Failed to update status'); }
+  };
+
+  const statusStyle: Record<BookingStatus, string> = {
+    'Pending':     'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+    'In Progress': 'bg-blue-500/20   text-blue-400   border border-blue-500/30',
+    'Completed':   'bg-green-500/20  text-green-400  border border-green-500/30',
+    'Cancelled':   'bg-red-500/20    text-red-400    border border-red-500/30',
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-white font-bold text-lg">Recent Bookings</h3>
+        <button onClick={onViewAll} className="text-xs text-[#FFD700] hover:underline transition-colors">View all →</button>
+      </div>
+      <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden flex-1">
+        {loading ? (
+          <div className="flex items-center justify-center h-48">
+            <div className="w-8 h-8 border-2 border-[#FFD700] border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : bookings.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-48 gap-2">
+            <p className="text-neutral-500 text-sm">No bookings yet.</p>
+            <button onClick={onViewAll} className="text-[#FFD700] text-xs hover:underline">Create one in Bookings →</button>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-neutral-950 border-b border-neutral-800">
+                  {['Booking ID', 'Customer', 'Service', 'Date', 'Status', 'Actions'].map(h => (
+                    <th key={h} className={`px-4 py-3 text-xs font-bold text-[#FFD700] text-left ${h === 'Actions' ? 'text-right' : ''}`}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-800/50">
+                {bookings.map(b => (
+                  <tr key={b.id} className="hover:bg-neutral-800/30 transition-colors">
+                    <td className="px-4 py-3 font-mono text-xs text-neutral-500">{b.id}</td>
+                    <td className="px-4 py-3 text-white text-sm font-medium">{b.customer}</td>
+                    <td className="px-4 py-3 text-neutral-400 text-xs max-w-[140px] truncate">{b.service}</td>
+                    <td className="px-4 py-3 text-neutral-500 text-xs whitespace-nowrap">{b.date}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusStyle[b.status]}`}>{b.status}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button title="Start" onClick={() => changeStatus(b.id, 'In Progress')} disabled={b.status === 'In Progress'}
+                          className="p-1 text-neutral-600 hover:text-[#FFD700] transition-colors disabled:opacity-20 disabled:cursor-not-allowed">
+                          <PlayCircle className="w-3.5 h-3.5" />
+                        </button>
+                        <button title="Complete" onClick={() => changeStatus(b.id, 'Completed')} disabled={b.status === 'Completed'}
+                          className="p-1 text-neutral-600 hover:text-green-400 transition-colors disabled:opacity-20 disabled:cursor-not-allowed">
+                          <CheckCircle className="w-3.5 h-3.5" />
+                        </button>
+                        <button title="Cancel" onClick={() => changeStatus(b.id, 'Cancelled')} disabled={b.status === 'Cancelled'}
+                          className="p-1 text-neutral-600 hover:text-red-400 transition-colors disabled:opacity-20 disabled:cursor-not-allowed">
+                          <XCircle className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── User Menu ─────────────────────────────────────────────────────────────────
+function UserMenu({ user, onLogout }: { user: DashboardProps['user']; onLogout: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative flex items-center gap-3 pl-6 border-l border-neutral-800">
+      <div className="text-right hidden md:block">
+        <p className="text-sm font-bold text-white">{user.name}</p>
+        <p className="text-xs text-neutral-500">{user.role}</p>
+      </div>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 h-9 w-9 rounded-full bg-[#FFD700] items-center justify-center text-black font-black hover:bg-[#FFD700]/90 transition-colors relative"
+      >
+        <span className="font-black text-sm">{user.name.charAt(0).toUpperCase()}</span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-52 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+          {/* User info */}
+          <div className="px-4 py-3 border-b border-neutral-800">
+            <p className="text-sm font-bold text-white">{user.name}</p>
+            <p className="text-xs text-neutral-500">{user.role}</p>
+            <p className="text-xs text-neutral-600 mt-0.5 font-mono">@{user.username}</p>
+          </div>
+          {/* Logout */}
+          <button
+            onClick={() => { setOpen(false); onLogout(); }}
+            className="w-full px-4 py-3 flex items-center gap-3 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            Sign Out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+export function Dashboard({ user, onLogout }: DashboardProps) {
+  const [activeTab,         setActiveTab]         = useState('dashboard');
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadCount,       setUnreadCount]        = useState(3);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setShowNotifications(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const dashboardHome = (
+    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="mb-8">
+        <h2 className="text-3xl font-bold text-white mb-2">
+          Welcome back, {user.name.split(' ')[0]} 👋
+        </h2>
+        <p className="text-neutral-400">
+          Here's what's happening at Anura Tyres today —{' '}
+          {new Date().toLocaleDateString('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+          })}
+        </p>
+      </div>
+
+      <StatsCards />
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-4">
+        <div className="lg:col-span-2 h-[600px]">
+          <RecentBookingsTable onViewAll={() => setActiveTab('bookings')} />
+        </div>
+        <div className="lg:col-span-1">
+          <StaffAssignment />
+          <div className="mt-8 bg-neutral-900 border border-neutral-800 rounded-lg p-6">
+            <h3 className="text-[#FFD700] font-bold mb-4 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4" /> System Alerts
+            </h3>
+            <div className="space-y-4">
+              <button onClick={() => setActiveTab('inventory')}
+                className="w-full text-left flex items-start gap-3 p-3 bg-red-900/20 border border-red-900/50 rounded-md hover:border-red-500/50 transition-colors">
+                <div className="h-2 w-2 mt-2 rounded-full bg-[#FF0000] flex-shrink-0 animate-pulse" />
+                <div>
+                  <p className="text-sm font-medium text-red-200">Low Stock Warning</p>
+                  <p className="text-xs text-red-400 mt-1">Michelin 205/55R16 running low (Only 4 left). <span className="underline text-red-300">View →</span></p>
+                </div>
+              </button>
+              <button onClick={() => setActiveTab('bookings')}
+                className="w-full text-left flex items-start gap-3 p-3 bg-yellow-900/20 border border-yellow-900/50 rounded-md hover:border-yellow-500/50 transition-colors">
+                <div className="h-2 w-2 mt-2 rounded-full bg-[#FFD700] flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-yellow-200">Pending Approvals</p>
+                  <p className="text-xs text-yellow-400 mt-1">3 fleet bookings need attention. <span className="underline text-yellow-300">Review →</span></p>
+                </div>
+              </button>
+            </div>
+            <div className="mt-4 pt-4 border-t border-neutral-800 grid grid-cols-2 gap-2">
+              {[
+                { label: 'Bookings', icon: <Calendar className="w-3.5 h-3.5" />, tab: 'bookings' },
+                { label: 'Inventory', icon: <Package className="w-3.5 h-3.5" />, tab: 'inventory' },
+                { label: 'Staff', icon: <User className="w-3.5 h-3.5" />, tab: 'staff' },
+                { label: 'Reports', icon: <span>📊</span>, tab: 'reports' },
+              ].map(item => (
+                <button key={item.tab} onClick={() => setActiveTab(item.tab)}
+                  className="flex items-center justify-center gap-1.5 py-2 bg-neutral-800 hover:bg-neutral-700 rounded-lg text-xs text-neutral-300 hover:text-white transition-colors">
+                  {item.icon} {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'dashboard': return dashboardHome;
+      case 'bookings':  return <BookingsPage />;
+      case 'staff':     return <StaffPage />;
+      case 'inventory': return <InventoryPage />;
+      case 'reports':   return <ReportsPage />;
+      case 'settings':  return <SettingsPage />;
+      default:          return <div className="text-white">Page not found</div>;
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-black text-white font-sans selection:bg-[#FFD700] selection:text-black">
+      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <main className="pl-64 min-h-screen">
+        <header className="h-16 border-b border-neutral-800 flex items-center justify-between px-8 sticky top-0 bg-black/80 backdrop-blur-md z-40">
+          <div className="flex items-center text-neutral-400 text-sm">
+            <span onClick={() => setActiveTab('dashboard')} className="hover:text-white cursor-pointer transition-colors">Admin</span>
+            <span className="mx-2 text-neutral-700">/</span>
+            <span className="text-[#FFD700] font-medium capitalize">{activeTab}</span>
+          </div>
+
+          <div className="flex items-center gap-6">
+            <GlobalSearch onNavigate={setActiveTab} />
+
+            {/* Notifications */}
+            <div ref={notifRef} className="relative">
+              <button onClick={() => { setShowNotifications(v => !v); setUnreadCount(0); }}
+                className="relative text-neutral-400 hover:text-[#FFD700] transition-colors">
+                <Bell className="h-5 w-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 h-4 w-4 bg-[#FF0000] rounded-full text-[9px] font-bold text-white flex items-center justify-center animate-pulse">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+              {showNotifications && <NotificationsPanel onClose={() => setShowNotifications(false)} />}
+            </div>
+
+            {/* User menu with logout */}
+            <UserMenu user={user} onLogout={onLogout} />
+          </div>
+        </header>
+
+        <div className="p-8 max-w-[1600px] mx-auto">{renderContent()}</div>
+      </main>
+    </div>
+  );
+}
