@@ -232,7 +232,6 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             </button>
           </form>
 
-          
 
           <p className="text-center text-neutral-700 text-xs mt-6">
             © {new Date().getFullYear()} Anura Tyres Pvt Ltd. All rights reserved.
