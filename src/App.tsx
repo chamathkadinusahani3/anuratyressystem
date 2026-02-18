@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { LoginPage } from './pages/LoginPage';
 import { Dashboard } from './pages/Dashboard';
-
 
 interface AuthUser {
   name: string;
@@ -45,9 +45,24 @@ export function App() {
     );
   }
 
-  if (!user) {
-    return <LoginPage onLogin={handleLogin} />;
-  }
+  return (
+    <BrowserRouter>
+      <Routes>
+        {/* Public route */}
+        <Route
+          path="/login"
+          element={user ? <Navigate to="/" replace /> : <LoginPage onLogin={handleLogin} />}
+        />
 
-  return <Dashboard user={user} onLogout={handleLogout} />;
+        {/* Protected route */}
+        <Route
+          path="/"
+          element={user ? <Dashboard user={user} onLogout={handleLogout} /> : <Navigate to="/login" replace />}
+        />
+
+        {/* Fallback for unknown routes */}
+        <Route path="*" element={<Navigate to={user ? "/" : "/login"} replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }

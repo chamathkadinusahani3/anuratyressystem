@@ -522,6 +522,7 @@ export function BookingsPage() {
       alert('Failed to update status: ' + err.message);
     }
   };
+  
 
   const filtered = bookings.filter(b =>
     (b.customer?.toLowerCase().includes(search.toLowerCase()) ||
@@ -682,3 +683,7 @@ export function BookingsPage() {
     </div>
   );
 }
+
+
+
+

@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Eye, EyeOff, LogIn, AlertCircle, Loader2 } from 'lucide-react';
+import logo from "../assets/logo.png";
+import { Link } from "react-router-dom";
 
 // ─── Credentials (change these to your real credentials) ─────────────────────
 const VALID_USERS = [
@@ -52,75 +54,101 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     <div className="min-h-screen bg-black flex selection:bg-[#FFD700] selection:text-black overflow-hidden">
 
       {/* ── Left Panel — Brand ── */}
-      <div className="hidden lg:flex lg:w-1/2 relative flex-col justify-between p-14 overflow-hidden">
+<div className="hidden lg:flex lg:w-1/2 relative flex-col justify-between p-14 overflow-hidden">
 
-        {/* Background layers */}
-        <div className="absolute inset-0 bg-gradient-to-br from-neutral-950 via-black to-neutral-900" />
+  {/* Background Image */}
+  <div
+    className="absolute inset-0 bg-cover bg-center"
+    style={{
+      backgroundImage: "url('/images/workshop-bg.png')"
+    }}
+  />
 
-        {/* Geometric tyre tread pattern */}
-        <div className="absolute inset-0 opacity-[0.04]"
-          style={{
-            backgroundImage: `repeating-linear-gradient(
-              45deg,
-              #FFD700 0px,
-              #FFD700 2px,
-              transparent 2px,
-              transparent 24px
-            ), repeating-linear-gradient(
-              -45deg,
-              #FFD700 0px,
-              #FFD700 2px,
-              transparent 2px,
-              transparent 24px
-            )`,
-          }}
-        />
+  {/* Dark overlay for readability */}
+  <div className="absolute inset-0 bg-black/70" />
 
-        {/* Glowing orb */}
-        <div className="absolute top-1/3 left-1/4 w-96 h-96 rounded-full opacity-10"
-          style={{ background: 'radial-gradient(circle, #FFD700 0%, transparent 70%)' }}
-        />
+  {/* Gradient overlay (optional – keep if you like the gold tone effect) */}
+  <div className="absolute inset-0 bg-gradient-to-br from-neutral-950/80 via-black/80 to-neutral-900/80" />
 
-        {/* Content */}
-        <div className="relative z-10">
-          {/* Logo */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-[#FFD700] flex items-center justify-center">
-              <span className="text-black font-black text-lg">A</span>
-            </div>
-            <span className="text-white font-black text-xl tracking-tight">ANURA TYRES</span>
-          </div>
-        </div>
+  {/* Geometric tyre tread pattern */}
+  <div
+    className="absolute inset-0 opacity-[0.04]"
+    style={{
+      backgroundImage: `repeating-linear-gradient(
+        45deg,
+        #FFD700 0px,
+        #FFD700 2px,
+        transparent 2px,
+        transparent 24px
+      ), repeating-linear-gradient(
+        -45deg,
+        #FFD700 0px,
+        #FFD700 2px,
+        transparent 2px,
+        transparent 24px
+      )`,
+    }}
+  />
 
-        {/* Centre statement */}
-        <div className="relative z-10 space-y-6">
-          {/* Big decorative tyre ring */}
-          <div className="w-48 h-48 rounded-full border-[12px] border-[#FFD700]/20 flex items-center justify-center mb-8">
-            <div className="w-32 h-32 rounded-full border-[8px] border-[#FFD700]/40 flex items-center justify-center">
-              <div className="w-16 h-16 rounded-full bg-[#FFD700]/10 border-[4px] border-[#FFD700]/60" />
-            </div>
-          </div>
+  {/* Glowing orb */}
+  <div
+    className="absolute top-1/3 left-1/4 w-96 h-96 rounded-full opacity-10"
+    style={{ background: 'radial-gradient(circle, #FFD700 0%, transparent 70%)' }}
+  />
 
-          <h1
-            className="text-5xl font-black text-white leading-[1.05] tracking-tighter"
-            style={{ fontFamily: '"Bebas Neue", "Impact", "Arial Black", sans-serif', letterSpacing: '-1px' }}
-          >
-            MANAGE YOUR<br />
-            <span className="text-[#FFD700]">WORKSHOP</span><br />
-            WITH PRECISION.
-          </h1>
-          <p className="text-neutral-400 text-base leading-relaxed max-w-xs">
-            Bookings, inventory, staff, and analytics — all in one powerful dashboard built for Anura Tyres.
-          </p>
-        </div>
+  {/* Content */}
+  <div className="relative z-10">
+    {/* Logo */}
+<Link to="/" className="flex items-center gap-3">
+  <img
+    src={logo}
+    alt="Anura Tyres Logo"
+    className="h-12 w-auto object-contain"
+  />
 
-        {/* Bottom tagline */}
-        <div className="relative z-10">
-          <p className="text-neutral-600 text-xs tracking-widest uppercase">
-            Anura Tyres Pvt Ltd — Management System
-          </p>
-        </div>
+  <div className="flex flex-col leading-none">
+    <span className="text-white font-bold text-lg">
+      ANURA TYRES
+    </span>
+    <span className="text-neutral-400 text-xs tracking-wider">
+      (Pvt) Ltd
+    </span>
+  </div>
+</Link>
+  </div>
+
+  {/* Centre statement */}
+  <div className="relative z-10 space-y-6">
+    <div className="w-48 h-48 rounded-full border-[12px] border-[#FFD700]/20 flex items-center justify-center mb-8">
+      <div className="w-32 h-32 rounded-full border-[8px] border-[#FFD700]/40 flex items-center justify-center">
+        <div className="w-16 h-16 rounded-full bg-[#FFD700]/10 border-[4px] border-[#FFD700]/60" />
       </div>
+    </div>
+
+    <h1
+      className="text-5xl font-black text-white leading-[1.05] tracking-tighter"
+      style={{
+        fontFamily: '"Bebas Neue", "Impact", "Arial Black", sans-serif',
+        letterSpacing: '-1px'
+      }}
+    >
+      MANAGE YOUR<br />
+      <span className="text-[#FFD700]">WORKSHOP</span><br />
+      WITH PRECISION.
+    </h1>
+
+    <p className="text-neutral-300 text-base leading-relaxed max-w-xs">
+      Bookings, inventory, staff, and analytics — all in one powerful dashboard built for Anura Tyres.
+    </p>
+  </div>
+
+  {/* Bottom tagline */}
+  <div className="relative z-10">
+    <p className="text-neutral-500 text-xs tracking-widest uppercase">
+      Anura Tyres Pvt Ltd — Management System
+    </p>
+  </div>
+</div>
 
       {/* ── Right Panel — Login Form ── */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8 relative">
@@ -145,10 +173,23 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         >
           {/* Mobile logo */}
           <div className="flex items-center gap-3 mb-10 lg:hidden">
-            <div className="w-9 h-9 rounded-full bg-[#FFD700] flex items-center justify-center">
-              <span className="text-black font-black text-base">A</span>
-            </div>
-            <span className="text-white font-black text-lg tracking-tight">ANURA TYRES</span>
+            {/* Logo */}
+<Link to="/" className="flex items-center gap-3">
+  <img
+    src={logo}
+    alt="Anura Tyres Logo"
+    className="h-12 w-auto object-contain"
+  />
+
+  <div className="flex flex-col leading-none">
+    <span className="text-white font-bold text-lg">
+      ANURA TYRES
+    </span>
+    <span className="text-neutral-400 text-xs tracking-wider">
+      (Pvt) Ltd
+    </span>
+  </div>
+</Link>
           </div>
 
           {/* Header */}
