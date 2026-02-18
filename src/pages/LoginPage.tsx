@@ -300,10 +300,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           {/* Helper text for first-time setup */}
           {JSON.parse(localStorage.getItem('at_users') || '[]').length === 0 && (
             <div className="mt-6 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-              <p className="text-blue-400 text-xs text-center">
-                <strong>First time?</strong> Use default credentials:<br />
-                Username: <span className="font-mono">admin</span> | Password: <span className="font-mono">admin123</span>
-              </p>
+              
             </div>
           )}
 
