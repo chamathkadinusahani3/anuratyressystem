@@ -4,6 +4,7 @@ import { StatsCards } from '../components/dashboard/StatsCards';
 import { StaffAssignment } from '../components/dashboard/StaffAssignment';
 import { Bell, Search, User, X, PlayCircle, CheckCircle, XCircle, AlertTriangle, Package, Calendar, LogOut, ChevronDown, Menu } from 'lucide-react';
 import { SettingsPage } from './SettingsPage';
+import { UserManagement } from './UserManagementpage';
 
 import { BookingsPage } from './BookingsPage';
 import { StaffPage } from './StaffPage';
@@ -447,6 +448,7 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
       case 'inventory': return <InventoryPage />;
       case 'reports':   return <ReportsPage />;
       case 'settings':  return <SettingsPage />;
+      case 'user-management': return <UserManagement />;
       default:          return <div className="text-white">Page not found</div>;
     }
   };

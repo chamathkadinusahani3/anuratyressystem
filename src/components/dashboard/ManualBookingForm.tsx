@@ -18,25 +18,34 @@ const BRANCHES = [
   {
     id: '1',
     name: 'Pannipitiya Branch',
-    address: '123 Main Street, Pannipitiya',
-    phone: '011-1234567',
+    address: '278/2 High Level Rd, Pannipitiya',
+    phone: '077 578 5785',
     hasFullService: true
   },
   {
     id: '2',
-    name: 'Maharagama Branch',
-    address: '456 Galle Road, Maharagama',
-    phone: '011-2345678',
+    name: 'Ratnapura Branch',
+    address: '151 Colombo Rd, Ratnapura',
+    phone: '076 688 5885  ',
     hasFullService: false
   },
   {
     id: '3',
-    name: 'Nugegoda Branch',
-    address: '789 High Level Road, Nugegoda',
-    phone: '011-3456789',
+    name: 'Kalawana Branch',
+    address: 'Rathnapura road, Kalawana',
+    phone: '0777 32 95 32  ',
+    hasFullService: false
+  },
+  {
+    id: '4',
+    name: 'Nivithigala Branch',
+    address: 'Tiruwanaketiya-Agalawatte Rd, Nivithigala',
+    phone: '045 227 9396',
     hasFullService: false
   }
 ];
+
+
 
 const SERVICE_CATEGORIES = [
   { id: 'Anura Tyres', label: 'Anura Tyres', description: 'Tyre services' },

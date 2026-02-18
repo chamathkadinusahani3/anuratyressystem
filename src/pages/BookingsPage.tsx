@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Calendar, Plus, ChevronLeft, ChevronRight, X, 
   PlayCircle, CheckCircle, XCircle, Search, Filter,
-  RefreshCw, Clock, MapPin, User, Phone, Mail, Car
+  RefreshCw, Clock, MapPin, User, Phone, Mail, Car, Printer, List
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -12,7 +12,7 @@ import { Card, CardHeader, CardTitle } from '../components/ui/Card';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type BookingStatus = 'Pending' | 'In Progress' | 'Completed' | 'Cancelled';
+type BookingStatus = 'Pending' | 'In Progress' | 'Completed' | 'Cancelled' | 'Waiting';
 
 interface Booking {
   id: string;
@@ -29,11 +29,42 @@ interface Booking {
 }
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
+
 const BRANCHES = [
-  { id: '1', name: 'Pannipitiya Branch', address: '123 High Level Rd, Pannipitiya', phone: '011-2851234', hasFullService: true },
-  { id: '2', name: 'Maharagama Branch', address: '45 Galle Rd, Maharagama', phone: '011-2842345', hasFullService: false },
-  { id: '3', name: 'Nugegoda Branch', address: '78 High Level Rd, Nugegoda', phone: '011-2813456', hasFullService: false },
+  {
+    id: '1',
+    name: 'Pannipitiya Branch',
+    address: '278/2 High Level Rd, Pannipitiya',
+    phone: '077 578 5785',
+    hasFullService: true,
+    maxBookingsPerSlot: 3
+  },
+  {
+    id: '2',
+    name: 'Ratnapura Branch',
+    address: '151 Colombo Rd, Ratnapura',
+    phone: '076 688 5885  ',
+    hasFullService: false,
+    maxBookingsPerSlot: 2
+  },
+  {
+    id: '3',
+    name: 'Kalawana Branch',
+    address: 'Rathnapura road, Kalawana',
+    phone: '0777 32 95 32  ',
+    hasFullService: false,
+    maxBookingsPerSlot: 2
+  },
+  {
+    id: '4',
+    name: 'Nivithigala Branch',
+    address: 'Tiruwanaketiya-Agalawatte Rd, Nivithigala',
+    phone: '045 227 9396',
+    hasFullService: false,
+    maxBookingsPerSlot: 2
+  }
 ];
+
 
 const SERVICE_CATEGORIES = [
   { id: 'Anura Tyres', label: 'Anura Tyres', description: 'Tyre fitting, balancing & alignment' },
@@ -70,9 +101,10 @@ function statusBadge(status: BookingStatus) {
     'In Progress': 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
     'Completed': 'bg-green-500/20 text-green-400 border border-green-500/30',
     'Cancelled': 'bg-red-500/20 text-red-400 border border-red-500/30',
+    'Waiting': 'bg-orange-500/20 text-orange-400 border border-orange-500/30',
   };
   return (
-    <span className={`px-2 py-1 rounded-full text-xs font-medium ${map[status]}`}>
+    <span className={`px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${map[status]}`}>
       {status}
     </span>
   );
@@ -81,9 +113,14 @@ function statusBadge(status: BookingStatus) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // MANUAL BOOKING FORM MODAL
 // ═══════════════════════════════════════════════════════════════════════════════
-function ManualBookingModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+function ManualBookingModal({ onClose, onSuccess, existingBookings }: { 
+  onClose: () => void; 
+  onSuccess: () => void;
+  existingBookings: Booking[];
+}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [availableSlots, setAvailableSlots] = useState<string[]>(TIME_SLOTS);
   const [form, setForm] = useState({
     branchId: '', category: '', serviceIds: [] as string[],
     date: '', timeSlot: '', name: '', email: '', phone: '', vehicleNo: ''
@@ -92,6 +129,43 @@ function ManualBookingModal({ onClose, onSuccess }: { onClose: () => void; onSuc
   const branch = BRANCHES.find(b => b.id === form.branchId);
   const categories = branch?.hasFullService ? SERVICE_CATEGORIES : SERVICE_CATEGORIES.filter(c => c.id === 'Anura Tyres');
   const services = SERVICES.filter(s => s.category === form.category);
+
+  // Check slot availability when branch or date changes
+  useEffect(() => {
+    if (form.branchId && form.date) {
+      checkSlotAvailability();
+    } else {
+      setAvailableSlots(TIME_SLOTS);
+    }
+  }, [form.branchId, form.date, existingBookings]);
+
+  const checkSlotAvailability = () => {
+    if (!form.branchId || !form.date) return;
+    
+    const branch = BRANCHES.find(b => b.id === form.branchId);
+    if (!branch) return;
+
+    // Get bookings for this branch and date (excluding cancelled ones)
+    const dateBookings = existingBookings.filter(
+      b => b.branch === branch.name && b.date === form.date && b.status !== 'Cancelled'
+    );
+
+    // Count bookings per time slot
+    const slotCounts = new Map<string, number>();
+    dateBookings.forEach(b => {
+      if (b.timeSlot) {
+        slotCounts.set(b.timeSlot, (slotCounts.get(b.timeSlot) || 0) + 1);
+      }
+    });
+
+    // Filter out fully booked slots
+    const available = TIME_SLOTS.filter(slot => {
+      const count = slotCounts.get(slot) || 0;
+      return count < branch.maxBookingsPerSlot;
+    });
+
+    setAvailableSlots(available);
+  };
 
   const toggle = (id: string) => setForm(f => ({
     ...f,
@@ -111,6 +185,12 @@ function ManualBookingModal({ onClose, onSuccess }: { onClose: () => void; onSuc
     try {
       const b = BRANCHES.find(b => b.id === form.branchId)!;
       const svcs = SERVICES.filter(s => form.serviceIds.includes(s.id));
+      
+      // Check if slot is still available
+      if (!availableSlots.includes(form.timeSlot)) {
+        throw new Error('This time slot is now fully booked. Please select another slot.');
+      }
+
       const res = await fetch(`${API_URL}/bookings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -135,16 +215,16 @@ function ManualBookingModal({ onClose, onSuccess }: { onClose: () => void; onSuc
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-      <div className="bg-neutral-900 rounded-xl border border-neutral-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
-        <div className="sticky top-0 bg-neutral-900 border-b border-neutral-700 px-6 py-4 flex justify-between items-center z-10">
-          <h2 className="text-xl font-bold text-white">Create New Booking</h2>
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm overflow-y-auto">
+      <div className="bg-neutral-900 rounded-xl border border-neutral-700 w-full max-w-2xl my-8 shadow-2xl">
+        <div className="sticky top-0 bg-neutral-900 border-b border-neutral-700 px-4 md:px-6 py-4 flex justify-between items-center z-10 rounded-t-xl">
+          <h2 className="text-lg md:text-xl font-bold text-white">Create New Booking</h2>
           <button onClick={onClose} className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={submit} className="p-6 space-y-5">
+        <form onSubmit={submit} className="p-4 md:p-6 space-y-5">
           {error && <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">{error}</div>}
 
           {/* Branch */}
@@ -161,7 +241,7 @@ function ManualBookingModal({ onClose, onSuccess }: { onClose: () => void; onSuc
           {form.branchId && (
             <div>
               <label className="text-sm font-medium text-white block mb-1.5">Category *</label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                 {categories.map(c => (
                   <button key={c.id} type="button"
                     onClick={() => setForm({...form, category: c.id, serviceIds: []})}
@@ -180,7 +260,7 @@ function ManualBookingModal({ onClose, onSuccess }: { onClose: () => void; onSuc
           {form.category && (
             <div>
               <label className="text-sm font-medium text-white block mb-1.5">Services * (select one or more)</label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-60 overflow-y-auto">
                 {services.map(s => (
                   <label key={s.id} className={`flex items-center gap-2.5 p-3 rounded-lg border cursor-pointer transition-all ${
                     form.serviceIds.includes(s.id)
@@ -195,20 +275,36 @@ function ManualBookingModal({ onClose, onSuccess }: { onClose: () => void; onSuc
           )}
 
           {/* Date & Time */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium text-white block mb-1.5">Date *</label>
               <input type="date" value={form.date} min={new Date().toISOString().split('T')[0]}
-                onChange={e => setForm({...form, date: e.target.value})}
+                onChange={e => setForm({...form, date: e.target.value, timeSlot: ''})}
                 className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors" required />
             </div>
             <div>
-              <label className="text-sm font-medium text-white block mb-1.5">Time Slot *</label>
+              <label className="text-sm font-medium text-white block mb-1.5">
+                Time Slot * 
+                {form.date && availableSlots.length < TIME_SLOTS.length && (
+                  <span className="text-xs text-orange-400 ml-2">({TIME_SLOTS.length - availableSlots.length} slots full)</span>
+                )}
+              </label>
               <select value={form.timeSlot} onChange={e => setForm({...form, timeSlot: e.target.value})}
-                className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors" required>
+                className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors" required
+                disabled={!form.date || availableSlots.length === 0}>
                 <option value="">Select time...</option>
-                {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
+                {availableSlots.length === 0 && form.date ? (
+                  <option value="" disabled>All slots fully booked</option>
+                ) : (
+                  availableSlots.map(t => <option key={t} value={t}>{t}</option>)
+                )}
               </select>
+              {availableSlots.length === 0 && form.date && (
+                <p className="text-xs text-orange-400 mt-1.5 flex items-start gap-1">
+                  <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                  <span>All time slots are fully booked for this date. Please select another date.</span>
+                </p>
+              )}
             </div>
           </div>
 
@@ -223,7 +319,7 @@ function ManualBookingModal({ onClose, onSuccess }: { onClose: () => void; onSuc
                 <input value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="e.g. Nimal Perera"
                   className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors placeholder:text-neutral-600" required />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label className="text-sm font-medium text-white block mb-1.5">Phone *</label>
                   <input type="tel" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} placeholder="077 123 4567"
@@ -243,13 +339,13 @@ function ManualBookingModal({ onClose, onSuccess }: { onClose: () => void; onSuc
             </div>
           </div>
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex flex-col md:flex-row gap-3 pt-2">
             <button type="button" onClick={onClose} disabled={loading}
               className="flex-1 px-4 py-2.5 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 transition-colors disabled:opacity-50">
               Cancel
             </button>
-            <button type="submit" disabled={loading}
-              className="flex-1 px-4 py-2.5 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+            <button type="submit" disabled={loading || (form.date && availableSlots.length === 0)}
+              className="flex-1 px-4 py-2.5 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
               {loading ? <><RefreshCw className="w-4 h-4 animate-spin" /> Creating...</> : 'Create Booking'}
             </button>
           </div>
@@ -258,6 +354,9 @@ function ManualBookingModal({ onClose, onSuccess }: { onClose: () => void; onSuc
     </div>
   );
 }
+
+// Import AlertTriangle for the warning message
+import { AlertTriangle } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CALENDAR VIEW MODAL
@@ -285,13 +384,14 @@ function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: ()
     'In Progress': 'bg-blue-500',
     'Completed': 'bg-green-500',
     'Cancelled': 'bg-red-500',
+    'Waiting': 'bg-orange-500',
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-      <div className="bg-neutral-900 rounded-xl border border-neutral-700 w-full max-w-5xl max-h-[90vh] overflow-y-auto shadow-2xl">
-        <div className="sticky top-0 bg-neutral-900 border-b border-neutral-700 px-6 py-4 flex justify-between items-center">
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm overflow-y-auto">
+      <div className="bg-neutral-900 rounded-xl border border-neutral-700 w-full max-w-5xl my-8 shadow-2xl">
+        <div className="sticky top-0 bg-neutral-900 border-b border-neutral-700 px-4 md:px-6 py-4 flex justify-between items-center rounded-t-xl">
+          <h2 className="text-lg md:text-xl font-bold text-white flex items-center gap-2">
             <Calendar className="w-5 h-5 text-[#FFD700]" /> Calendar View
           </h2>
           <button onClick={onClose} className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition-colors">
@@ -299,15 +399,15 @@ function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: ()
           </button>
         </div>
 
-        <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="p-4 md:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Calendar Grid */}
-          <div className="lg:col-span-2 bg-neutral-800 rounded-xl border border-neutral-700 p-5">
+          <div className="lg:col-span-2 bg-neutral-800 rounded-xl border border-neutral-700 p-4 md:p-5">
             <div className="flex items-center justify-between mb-5">
               <button onClick={() => setCurrentDate(new Date(year, month - 1, 1))}
                 className="p-2 hover:bg-neutral-700 rounded-lg text-neutral-400 hover:text-white transition-colors">
                 <ChevronLeft className="w-5 h-5" />
               </button>
-              <h3 className="text-lg font-bold text-white">
+              <h3 className="text-base md:text-lg font-bold text-white">
                 {currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}
               </h3>
               <button onClick={() => setCurrentDate(new Date(year, month + 1, 1))}
@@ -329,7 +429,7 @@ function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: ()
                 const isSelected = selectedDay === day;
                 return (
                   <button key={day} onClick={() => setSelectedDay(day)}
-                    className={`min-h-[72px] p-1.5 rounded-lg border transition-all text-left ${
+                    className={`min-h-[60px] md:min-h-[72px] p-1.5 rounded-lg border transition-all text-left ${
                       isSelected ? 'bg-[#FFD700]/10 border-[#FFD700]' :
                       isToday(day) ? 'border-[#FFD700]/40 bg-neutral-900' :
                       'border-neutral-700 bg-neutral-900 hover:border-neutral-600'}`}>
@@ -350,8 +450,8 @@ function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: ()
           </div>
 
           {/* Day Details */}
-          <div className="bg-neutral-800 rounded-xl border border-neutral-700 p-5">
-            <h3 className="font-bold text-white mb-4">
+          <div className="bg-neutral-800 rounded-xl border border-neutral-700 p-4 md:p-5">
+            <h3 className="font-bold text-white mb-4 text-sm md:text-base">
               {selectedDay
                 ? new Date(year, month, selectedDay).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
                 : 'Click a date to view bookings'}
@@ -359,10 +459,10 @@ function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: ()
             {selectedDay && (
               selectedBookings.length === 0
                 ? <div className="text-neutral-500 text-sm text-center py-8">No bookings on this day</div>
-                : <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                : <div className="space-y-3 max-h-[300px] md:max-h-[400px] overflow-y-auto">
                     {selectedBookings.map(b => (
                       <div key={b.id} className="p-3 bg-neutral-900 rounded-lg border border-neutral-700">
-                        <div className="flex justify-between items-start mb-2">
+                        <div className="flex justify-between items-start mb-2 gap-2">
                           <span className="text-sm font-semibold text-white">{b.timeSlot || '--:--'}</span>
                           {statusBadge(b.status)}
                         </div>
@@ -400,78 +500,159 @@ function BookingDetailModal({ booking, onClose, onStatusChange }: {
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
       <div className="bg-neutral-900 rounded-xl border border-neutral-700 w-full max-w-lg shadow-2xl">
-        <div className="border-b border-neutral-700 px-6 py-4 flex justify-between items-center">
-          <h2 className="text-xl font-bold text-white">Booking Details</h2>
+        <div className="border-b border-neutral-700 px-4 md:px-6 py-4 flex justify-between items-center">
+          <h2 className="text-lg md:text-xl font-bold text-white">Booking Details</h2>
           <button onClick={onClose} className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-lg font-bold text-[#FFD700]">{booking.id}</span>
+        <div className="p-4 md:p-6 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-base md:text-lg font-bold text-[#FFD700] break-all">{booking.id}</span>
             {statusBadge(booking.status)}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="flex items-start gap-2">
-              <User className="w-4 h-4 text-[#FFD700] mt-0.5" />
-              <div>
+              <User className="w-4 h-4 text-[#FFD700] mt-0.5 flex-shrink-0" />
+              <div className="min-w-0">
                 <div className="text-xs text-neutral-500">Customer</div>
-                <div className="text-sm text-white font-medium">{booking.customer}</div>
+                <div className="text-sm text-white font-medium break-words">{booking.customer}</div>
               </div>
             </div>
             <div className="flex items-start gap-2">
-              <Car className="w-4 h-4 text-[#FFD700] mt-0.5" />
-              <div>
+              <Car className="w-4 h-4 text-[#FFD700] mt-0.5 flex-shrink-0" />
+              <div className="min-w-0">
                 <div className="text-xs text-neutral-500">Vehicle</div>
-                <div className="text-sm text-white">{booking.vehicle || 'N/A'}</div>
+                <div className="text-sm text-white break-words">{booking.vehicle || 'N/A'}</div>
               </div>
             </div>
             <div className="flex items-start gap-2">
-              <Calendar className="w-4 h-4 text-[#FFD700] mt-0.5" />
-              <div>
+              <Calendar className="w-4 h-4 text-[#FFD700] mt-0.5 flex-shrink-0" />
+              <div className="min-w-0">
                 <div className="text-xs text-neutral-500">Date</div>
                 <div className="text-sm text-white">{booking.date}</div>
               </div>
             </div>
             <div className="flex items-start gap-2">
-              <Clock className="w-4 h-4 text-[#FFD700] mt-0.5" />
-              <div>
+              <Clock className="w-4 h-4 text-[#FFD700] mt-0.5 flex-shrink-0" />
+              <div className="min-w-0">
                 <div className="text-xs text-neutral-500">Time</div>
                 <div className="text-sm text-white">{booking.timeSlot || 'N/A'}</div>
               </div>
             </div>
-            <div className="flex items-start gap-2 col-span-2">
-              <MapPin className="w-4 h-4 text-[#FFD700] mt-0.5" />
-              <div>
+            <div className="flex items-start gap-2 col-span-1 md:col-span-2">
+              <MapPin className="w-4 h-4 text-[#FFD700] mt-0.5 flex-shrink-0" />
+              <div className="min-w-0">
                 <div className="text-xs text-neutral-500">Service</div>
-                <div className="text-sm text-white">{booking.service}</div>
+                <div className="text-sm text-white break-words">{booking.service}</div>
               </div>
             </div>
           </div>
 
           <div className="border-t border-neutral-800 pt-4">
             <div className="text-xs text-neutral-500 mb-3">Update Status</div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <button onClick={() => changeStatus('In Progress')} disabled={booking.status === 'In Progress' || loading !== null}
-                className="py-2 px-3 bg-blue-500/20 border border-blue-500/30 text-blue-400 rounded-lg text-xs font-medium hover:bg-blue-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
+                className="py-2 px-2 md:px-3 bg-blue-500/20 border border-blue-500/30 text-blue-400 rounded-lg text-xs font-medium hover:bg-blue-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
                 {loading === 'In Progress' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <PlayCircle className="w-3 h-3" />}
-                In Progress
+                <span className="hidden sm:inline">In Progress</span>
+                <span className="sm:hidden">Progress</span>
               </button>
               <button onClick={() => changeStatus('Completed')} disabled={booking.status === 'Completed' || loading !== null}
-                className="py-2 px-3 bg-green-500/20 border border-green-500/30 text-green-400 rounded-lg text-xs font-medium hover:bg-green-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
+                className="py-2 px-2 md:px-3 bg-green-500/20 border border-green-500/30 text-green-400 rounded-lg text-xs font-medium hover:bg-green-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
                 {loading === 'Completed' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
-                Completed
+                <span className="hidden sm:inline">Completed</span>
+                <span className="sm:hidden">Done</span>
               </button>
               <button onClick={() => changeStatus('Cancelled')} disabled={booking.status === 'Cancelled' || loading !== null}
-                className="py-2 px-3 bg-red-500/20 border border-red-500/30 text-red-400 rounded-lg text-xs font-medium hover:bg-red-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
+                className="py-2 px-2 md:px-3 bg-red-500/20 border border-red-500/30 text-red-400 rounded-lg text-xs font-medium hover:bg-red-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
                 {loading === 'Cancelled' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
-                Cancelled
+                <span className="hidden sm:inline">Cancelled</span>
+                <span className="sm:hidden">Cancel</span>
+              </button>
+              <button onClick={() => changeStatus('Waiting')} disabled={booking.status === 'Waiting' || loading !== null}
+                className="py-2 px-2 md:px-3 bg-orange-500/20 border border-orange-500/30 text-orange-400 rounded-lg text-xs font-medium hover:bg-orange-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
+                {loading === 'Waiting' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <List className="w-3 h-3" />}
+                <span className="hidden sm:inline">Waiting</span>
+                <span className="sm:hidden">Wait</span>
               </button>
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRINT VIEW
+// ═══════════════════════════════════════════════════════════════════════════════
+function PrintView({ bookings, onClose }: { bookings: Booking[]; onClose: () => void }) {
+  const handlePrint = () => {
+    window.print();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-white z-50 overflow-auto">
+      {/* Screen-only controls */}
+      <div className="print:hidden sticky top-0 bg-white border-b border-neutral-300 px-4 md:px-6 py-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-sm">
+        <h2 className="text-lg md:text-xl font-bold text-neutral-900">Print Preview</h2>
+        <div className="flex gap-3">
+          <button onClick={handlePrint}
+            className="flex items-center gap-2 px-4 py-2 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors">
+            <Printer className="w-4 h-4" /> Print
+          </button>
+          <button onClick={onClose}
+            className="flex items-center gap-2 px-4 py-2 border border-neutral-300 rounded-lg text-neutral-700 text-sm font-medium hover:bg-neutral-100 transition-colors">
+            <X className="w-4 h-4" /> Close
+          </button>
+        </div>
+      </div>
+
+      {/* Print content */}
+      <div className="p-4 md:p-8 max-w-7xl mx-auto">
+        <div className="mb-6 md:mb-8 text-center">
+          <h1 className="text-2xl md:text-3xl font-bold text-neutral-900 mb-2">Anura Tyres - Bookings Report</h1>
+          <p className="text-sm md:text-base text-neutral-600">Generated on {new Date().toLocaleString()}</p>
+          <p className="text-sm md:text-base text-neutral-600 mt-1">Total Bookings: {bookings.length}</p>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse border border-neutral-300 text-sm">
+            <thead>
+              <tr className="bg-neutral-100">
+                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">ID</th>
+                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Date</th>
+                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Time</th>
+                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Customer</th>
+                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Vehicle</th>
+                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Service</th>
+                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Branch</th>
+                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bookings.map((booking, idx) => (
+                <tr key={booking.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-neutral-50'}>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs font-mono text-neutral-700">{booking.id}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-900">{booking.date}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-900">{booking.timeSlot || 'N/A'}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-medium text-neutral-900">{booking.customer}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-700">{booking.vehicle || 'N/A'}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-700">{booking.service}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-700">{booking.branch || 'N/A'}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-medium text-neutral-900">{booking.status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {bookings.length === 0 && (
+          <div className="text-center py-8 text-neutral-500 text-sm md:text-base">No bookings to display</div>
+        )}
       </div>
     </div>
   );
@@ -486,11 +667,13 @@ export function BookingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [dateFilter, setDateFilter] = useState<string>('');
   const [showNewBooking, setShowNewBooking] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
+  const [showPrint, setShowPrint] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
 
-  useEffect(() => { fetchBookings(); }, [statusFilter]);
+  useEffect(() => { fetchBookings(); }, [statusFilter, dateFilter]);
 
   const fetchBookings = async () => {
     setLoading(true);
@@ -498,6 +681,7 @@ export function BookingsPage() {
     try {
       const params = new URLSearchParams();
       if (statusFilter !== 'all') params.append('status', statusFilter);
+      if (dateFilter) params.append('date', dateFilter);
       const res = await fetch(`${API_URL}/bookings?${params}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Failed to fetch');
@@ -535,144 +719,166 @@ export function BookingsPage() {
     pending: bookings.filter(b => b.status === 'Pending').length,
     inProgress: bookings.filter(b => b.status === 'In Progress').length,
     completed: bookings.filter(b => b.status === 'Completed').length,
+    waiting: bookings.filter(b => b.status === 'Waiting').length,
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-3xl font-bold text-white mb-1">Bookings Management</h2>
-          <p className="text-neutral-400 text-sm">View and manage all service appointments.</p>
-        </div>
-        <div className="flex gap-3">
-          <button onClick={() => setShowCalendar(true)}
-            className="flex items-center gap-2 px-4 py-2 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors">
-            <Calendar className="w-4 h-4" /> Calendar View
-          </button>
-          <button onClick={() => setShowNewBooking(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors">
-            <Plus className="w-4 h-4" /> New Booking
-          </button>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: 'Total', value: stats.total, color: 'text-white' },
-          { label: 'Pending', value: stats.pending, color: 'text-yellow-400' },
-          { label: 'In Progress', value: stats.inProgress, color: 'text-blue-400' },
-          { label: 'Completed', value: stats.completed, color: 'text-green-400' },
-        ].map(s => (
-          <div key={s.label} className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
-            <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
-            <div className="text-neutral-500 text-sm mt-0.5">{s.label}</div>
+    <>
+      <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-2xl md:text-3xl font-bold text-white mb-1">Bookings Management</h2>
+            <p className="text-neutral-400 text-sm">View and manage all service appointments.</p>
           </div>
-        ))}
-      </div>
-
-      {/* Table Card */}
-      <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
-        {/* Filters */}
-        <div className="p-5 border-b border-neutral-800 flex flex-col md:flex-row gap-3">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customer, ID, vehicle..."
-              className="w-full pl-9 pr-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600 transition-colors" />
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            {(['all', 'Pending', 'In Progress', 'Completed', 'Cancelled'] as const).map(s => (
-              <button key={s} onClick={() => setStatusFilter(s)}
-                className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-                  statusFilter === s
-                    ? 'bg-[#FFD700] text-black'
-                    : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-white border border-neutral-700'}`}>
-                {s === 'all' ? 'All' : s}
-              </button>
-            ))}
-            <button onClick={fetchBookings} disabled={loading}
-              className="p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors">
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          <div className="flex flex-wrap gap-2 md:gap-3">
+            <button onClick={() => setShowPrint(true)}
+              className="flex items-center gap-2 px-3 md:px-4 py-2 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors">
+              <Printer className="w-4 h-4" /> <span className="hidden sm:inline">Print</span>
+            </button>
+            <button onClick={() => setShowCalendar(true)}
+              className="flex items-center gap-2 px-3 md:px-4 py-2 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors">
+              <Calendar className="w-4 h-4" /> <span className="hidden sm:inline">Calendar</span>
+            </button>
+            <button onClick={() => setShowNewBooking(true)}
+              className="flex items-center gap-2 px-3 md:px-4 py-2 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors">
+              <Plus className="w-4 h-4" /> New
             </button>
           </div>
         </div>
 
-        {/* Error */}
-        {error && <div className="p-4 bg-red-500/10 border-b border-red-500/20 text-red-400 text-sm text-center">{error}</div>}
+        {/* Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
+          {[
+            { label: 'Total', value: stats.total, color: 'text-white' },
+            { label: 'Pending', value: stats.pending, color: 'text-yellow-400' },
+            { label: 'In Progress', value: stats.inProgress, color: 'text-blue-400' },
+            { label: 'Completed', value: stats.completed, color: 'text-green-400' },
+            { label: 'Waiting', value: stats.waiting, color: 'text-orange-400' },
+          ].map(s => (
+            <div key={s.label} className="bg-neutral-900 border border-neutral-800 rounded-xl p-3 md:p-4">
+              <div className={`text-xl md:text-2xl font-bold ${s.color}`}>{s.value}</div>
+              <div className="text-neutral-500 text-xs md:text-sm mt-0.5">{s.label}</div>
+            </div>
+          ))}
+        </div>
 
-        {/* Loading */}
-        {loading && (
-          <div className="flex items-center justify-center py-16">
-            <RefreshCw className="w-8 h-8 text-[#FFD700] animate-spin" />
+        {/* Table Card */}
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
+          {/* Filters */}
+          <div className="p-3 md:p-5 border-b border-neutral-800 space-y-3">
+            <div className="flex flex-col md:flex-row gap-3">
+              <div className="relative flex-1 max-w-full md:max-w-sm">
+                <Search className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500" />
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customer, ID, vehicle..."
+                  className="w-full pl-9 pr-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600 transition-colors" />
+              </div>
+              <div className="flex gap-2 items-center">
+                <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)}
+                  className="px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors"
+                  placeholder="Filter by date" />
+                {dateFilter && (
+                  <button onClick={() => setDateFilter('')}
+                    className="px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-white text-xs font-medium transition-colors whitespace-nowrap">
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {(['all', 'Pending', 'In Progress', 'Completed', 'Cancelled', 'Waiting'] as const).map(s => (
+                <button key={s} onClick={() => setStatusFilter(s)}
+                  className={`px-3 py-1.5 md:py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
+                    statusFilter === s
+                      ? 'bg-[#FFD700] text-black'
+                      : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-white border border-neutral-700'}`}>
+                  {s === 'all' ? 'All' : s}
+                </button>
+              ))}
+              <button onClick={fetchBookings} disabled={loading}
+                className="p-1.5 md:p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors">
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
           </div>
-        )}
 
-        {/* Empty */}
-        {!loading && !error && filtered.length === 0 && (
-          <div className="py-16 text-center">
-            <div className="text-neutral-500 mb-3">No bookings found</div>
-            <button onClick={fetchBookings} className="text-[#FFD700] text-sm hover:underline">Refresh</button>
-          </div>
-        )}
+          {/* Error */}
+          {error && <div className="p-4 bg-red-500/10 border-b border-red-500/20 text-red-400 text-sm text-center">{error}</div>}
 
-        {/* Table */}
-        {!loading && filtered.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-neutral-950 border-b border-neutral-800">
-                  {['Booking ID', 'Date', 'Customer', 'Vehicle', 'Service', 'Status', 'Actions'].map(h => (
-                    <th key={h} className={`px-5 py-3.5 font-bold text-[#FFD700] text-left ${h === 'Actions' ? 'text-right' : ''}`}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-800">
-                {filtered.map(booking => (
-                  <tr key={booking.id} className="hover:bg-neutral-800/50 transition-colors cursor-pointer"
-                    onClick={() => setSelectedBooking(booking)}>
-                    <td className="px-5 py-4 font-mono font-medium text-white text-xs">{booking.id}</td>
-                    <td className="px-5 py-4 text-neutral-400 text-xs">{booking.date}</td>
-                    <td className="px-5 py-4 text-white font-medium">{booking.customer}</td>
-                    <td className="px-5 py-4 text-neutral-400 text-xs">{booking.vehicle || 'N/A'}</td>
-                    <td className="px-5 py-4 text-neutral-300 text-xs max-w-[150px] truncate">{booking.service}</td>
-                    <td className="px-5 py-4">{statusBadge(booking.status)}</td>
-                    <td className="px-5 py-4 text-right" onClick={e => e.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button title="Start" onClick={() => handleStatusChange(booking.id, 'In Progress')}
-                          disabled={booking.status === 'In Progress'}
-                          className="p-1.5 rounded text-neutral-500 hover:text-[#FFD700] hover:bg-neutral-800 transition-colors disabled:opacity-30">
-                          <PlayCircle className="w-4 h-4" />
-                        </button>
-                        <button title="Complete" onClick={() => handleStatusChange(booking.id, 'Completed')}
-                          disabled={booking.status === 'Completed'}
-                          className="p-1.5 rounded text-neutral-500 hover:text-green-400 hover:bg-neutral-800 transition-colors disabled:opacity-30">
-                          <CheckCircle className="w-4 h-4" />
-                        </button>
-                        <button title="Cancel" onClick={() => handleStatusChange(booking.id, 'Cancelled')}
-                          disabled={booking.status === 'Cancelled'}
-                          className="p-1.5 rounded text-neutral-500 hover:text-red-400 hover:bg-neutral-800 transition-colors disabled:opacity-30">
-                          <XCircle className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
+          {/* Loading */}
+          {loading && (
+            <div className="flex items-center justify-center py-16">
+              <RefreshCw className="w-8 h-8 text-[#FFD700] animate-spin" />
+            </div>
+          )}
+
+          {/* Empty */}
+          {!loading && !error && filtered.length === 0 && (
+            <div className="py-16 text-center">
+              <div className="text-neutral-500 mb-3">No bookings found</div>
+              <button onClick={fetchBookings} className="text-[#FFD700] text-sm hover:underline">Refresh</button>
+            </div>
+          )}
+
+          {/* Table */}
+          {!loading && filtered.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-neutral-950 border-b border-neutral-800">
+                    {['Booking ID', 'Date', 'Customer', 'Vehicle', 'Service', 'Status', 'Actions'].map(h => (
+                      <th key={h} className={`px-3 md:px-5 py-3 md:py-3.5 font-bold text-[#FFD700] text-left text-xs md:text-sm whitespace-nowrap ${h === 'Actions' ? 'text-right' : ''}`}>{h}</th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody className="divide-y divide-neutral-800">
+                  {filtered.map(booking => (
+                    <tr key={booking.id} className="hover:bg-neutral-800/50 transition-colors cursor-pointer"
+                      onClick={() => setSelectedBooking(booking)}>
+                      <td className="px-3 md:px-5 py-3 md:py-4 font-mono font-medium text-white text-xs">{booking.id}</td>
+                      <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-400 text-xs whitespace-nowrap">{booking.date}</td>
+                      <td className="px-3 md:px-5 py-3 md:py-4 text-white font-medium text-sm">{booking.customer}</td>
+                      <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-400 text-xs">{booking.vehicle || 'N/A'}</td>
+                      <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-300 text-xs max-w-[120px] md:max-w-[150px] truncate">{booking.service}</td>
+                      <td className="px-3 md:px-5 py-3 md:py-4">{statusBadge(booking.status)}</td>
+                      <td className="px-3 md:px-5 py-3 md:py-4 text-right" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1 md:gap-1.5">
+                          <button title="Start" onClick={() => handleStatusChange(booking.id, 'In Progress')}
+                            disabled={booking.status === 'In Progress'}
+                            className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-[#FFD700] hover:bg-neutral-800 transition-colors disabled:opacity-30">
+                            <PlayCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                          </button>
+                          <button title="Complete" onClick={() => handleStatusChange(booking.id, 'Completed')}
+                            disabled={booking.status === 'Completed'}
+                            className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-green-400 hover:bg-neutral-800 transition-colors disabled:opacity-30">
+                            <CheckCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                          </button>
+                          <button title="Cancel" onClick={() => handleStatusChange(booking.id, 'Cancelled')}
+                            disabled={booking.status === 'Cancelled'}
+                            className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-red-400 hover:bg-neutral-800 transition-colors disabled:opacity-30">
+                            <XCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-        {!loading && filtered.length > 0 && (
-          <div className="px-5 py-3 border-t border-neutral-800 text-xs text-neutral-500">
-            Showing {filtered.length} of {bookings.length} bookings
-          </div>
-        )}
+          {!loading && filtered.length > 0 && (
+            <div className="px-3 md:px-5 py-3 border-t border-neutral-800 text-xs text-neutral-500">
+              Showing {filtered.length} of {bookings.length} bookings
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Modals */}
-      {showNewBooking && <ManualBookingModal onClose={() => setShowNewBooking(false)} onSuccess={fetchBookings} />}
+      {showNewBooking && <ManualBookingModal onClose={() => setShowNewBooking(false)} onSuccess={fetchBookings} existingBookings={bookings} />}
       {showCalendar && <CalendarModal bookings={bookings} onClose={() => setShowCalendar(false)} />}
+      {showPrint && <PrintView bookings={filtered} onClose={() => setShowPrint(false)} />}
       {selectedBooking && (
         <BookingDetailModal
           booking={selectedBooking}
@@ -680,10 +886,6 @@ export function BookingsPage() {
           onStatusChange={async (id, status) => { await handleStatusChange(id, status); setSelectedBooking(null); }}
         />
       )}
-    </div>
+    </>
   );
 }
-
-
-
-

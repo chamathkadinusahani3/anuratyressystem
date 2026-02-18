@@ -3,12 +3,13 @@ import { Eye, EyeOff, LogIn, AlertCircle, Loader2 } from 'lucide-react';
 import logo from "../assets/logo.png";
 import { Link } from "react-router-dom";
 
-// ─── Credentials (change these to your real credentials) ─────────────────────
-const VALID_USERS = [
-  { username: 'admin',   password: 'admin123',   name: 'Admin User',    role: 'Manager'        },
-  { username: 'staff',   password: 'staff123',   name: 'Staff Member',  role: 'Service Advisor' },
-  { username: 'manager', password: 'manager123', name: 'Branch Manager', role: 'Manager'        },
-];
+// ─── Default Admin (fallback if no users exist) ───────────────────────────────
+const DEFAULT_ADMIN = {
+  username: 'chamathka',
+  password: '123',
+  name: 'System Administrator',
+  role: 'Super Admin'
+};
 
 interface LoginPageProps {
   onLogin: (user: { name: string; role: string; username: string }) => void;
@@ -34,13 +35,35 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     // Simulate auth delay for realism
     await new Promise(r => setTimeout(r, 900));
 
-    const user = VALID_USERS.find(
-      u => u.username === username.trim().toLowerCase() && u.password === password
+    // Get users from localStorage (created via User Management)
+    const storedUsers = JSON.parse(localStorage.getItem('at_users') || '[]');
+    
+    // If no users exist in system, allow default admin login
+    const users = storedUsers.length > 0 ? storedUsers : [DEFAULT_ADMIN];
+
+    // Find matching user
+    const user = users.find(
+      (u: any) => u.username.toLowerCase() === username.trim().toLowerCase() && u.password === password
     );
 
     if (user) {
+      // Update last login time
+      if (storedUsers.length > 0) {
+        const updatedUsers = storedUsers.map((u: any) => 
+          u.username === user.username 
+            ? { ...u, lastLogin: new Date().toISOString() }
+            : u
+        );
+        localStorage.setItem('at_users', JSON.stringify(updatedUsers));
+      }
+
       // Store session
-      localStorage.setItem('at_user', JSON.stringify({ name: user.name, role: user.role, username: user.username }));
+      localStorage.setItem('at_user', JSON.stringify({ 
+        name: user.name, 
+        role: user.role, 
+        username: user.username 
+      }));
+      
       onLogin({ name: user.name, role: user.role, username: user.username });
     } else {
       setLoading(false);
@@ -105,6 +128,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     alt="Anura Tyres Logo"
     className="h-12 w-auto object-contain"
   />
+
 
   <div className="flex flex-col leading-none">
     <span className="text-white font-bold text-lg">
@@ -273,6 +297,15 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             </button>
           </form>
 
+          {/* Helper text for first-time setup */}
+          {JSON.parse(localStorage.getItem('at_users') || '[]').length === 0 && (
+            <div className="mt-6 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+              <p className="text-blue-400 text-xs text-center">
+                <strong>First time?</strong> Use default credentials:<br />
+                Username: <span className="font-mono">admin</span> | Password: <span className="font-mono">admin123</span>
+              </p>
+            </div>
+          )}
 
           <p className="text-center text-neutral-700 text-xs mt-6">
             © {new Date().getFullYear()} Anura Tyres Pvt Ltd. All rights reserved.
