@@ -299,9 +299,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
           {/* Helper text for first-time setup */}
           {JSON.parse(localStorage.getItem('at_users') || '[]').length === 0 && (
-            <div className="mt-6 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-              
-            </div>
+            
           )}
 
           <p className="text-center text-neutral-700 text-xs mt-6">
