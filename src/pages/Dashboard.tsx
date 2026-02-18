@@ -399,42 +399,7 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
         </div>
         <div className="lg:col-span-1 space-y-6 md:space-y-8">
           <StaffAssignment />
-          <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4 md:p-6">
-            <h3 className="text-[#FFD700] font-bold mb-4 flex items-center gap-2 text-sm md:text-base">
-              <AlertTriangle className="w-4 h-4" /> System Alerts
-            </h3>
-            <div className="space-y-3 md:space-y-4">
-              <button onClick={() => setActiveTab('inventory')}
-                className="w-full text-left flex items-start gap-3 p-3 bg-red-900/20 border border-red-900/50 rounded-md hover:border-red-500/50 transition-colors">
-                <div className="h-2 w-2 mt-2 rounded-full bg-[#FF0000] flex-shrink-0 animate-pulse" />
-                <div>
-                  <p className="text-sm font-medium text-red-200">Low Stock Warning</p>
-                  <p className="text-xs text-red-400 mt-1">Michelin 205/55R16 running low (Only 4 left). <span className="underline text-red-300">View →</span></p>
-                </div>
-              </button>
-              <button onClick={() => setActiveTab('bookings')}
-                className="w-full text-left flex items-start gap-3 p-3 bg-yellow-900/20 border border-yellow-900/50 rounded-md hover:border-yellow-500/50 transition-colors">
-                <div className="h-2 w-2 mt-2 rounded-full bg-[#FFD700] flex-shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-yellow-200">Pending Approvals</p>
-                  <p className="text-xs text-yellow-400 mt-1">3 fleet bookings need attention. <span className="underline text-yellow-300">Review →</span></p>
-                </div>
-              </button>
-            </div>
-            <div className="mt-4 pt-4 border-t border-neutral-800 grid grid-cols-2 gap-2">
-              {[
-                { label: 'Bookings', icon: <Calendar className="w-3.5 h-3.5" />, tab: 'bookings' },
-                { label: 'Inventory', icon: <Package className="w-3.5 h-3.5" />, tab: 'inventory' },
-                { label: 'Staff', icon: <User className="w-3.5 h-3.5" />, tab: 'staff' },
-                { label: 'Reports', icon: <span>📊</span>, tab: 'reports' },
-              ].map(item => (
-                <button key={item.tab} onClick={() => setActiveTab(item.tab)}
-                  className="flex items-center justify-center gap-1.5 py-2 bg-neutral-800 hover:bg-neutral-700 rounded-lg text-xs text-neutral-300 hover:text-white transition-colors">
-                  {item.icon} {item.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          
         </div>
       </div>
     </div>
