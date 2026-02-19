@@ -31,8 +31,9 @@ export const ROLE_PERMISSIONS = {
     "inventory",
     "reports",
   ],
-  "Service Advisor": [
+  cashier: [
     "dashboard",
     "bookings",
+    "settings",
   ],
 };
