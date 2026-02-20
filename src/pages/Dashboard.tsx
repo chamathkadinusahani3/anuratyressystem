@@ -2,10 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from '../components/layout/Sidebar';
 import { StatsCards } from '../components/dashboard/StatsCards';
 import { StaffAssignment } from '../components/dashboard/StaffAssignment';
-import { Bell, Search, User, X, PlayCircle, CheckCircle, XCircle, AlertTriangle, Package, Calendar, LogOut, ChevronDown, Menu } from 'lucide-react';
+import { Bell, Search, User, X, PlayCircle, CheckCircle, XCircle, AlertTriangle, Package, Calendar, LogOut, ChevronDown, Menu, Route } from 'lucide-react';
 import { SettingsPage } from './SettingsPage';
 import { UserManagement } from './UserManagementpage';
-
+import { CorporateManagementPage } from './CorporateManagementPage';
 import { BookingsPage } from './BookingsPage';
 import { StaffPage } from './StaffPage';
 import { InventoryPage } from './InventoryPage';
@@ -414,6 +414,7 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
       case 'reports':   return <ReportsPage />;
       case 'settings':  return <SettingsPage />;
       case 'user-management': return <UserManagement />;
+      case 'corporate-data': return <CorporateManagementPage />;
       default:          return <div className="text-white">Page not found</div>;
     }
   };

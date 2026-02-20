@@ -7,7 +7,8 @@ import {
   Settings,
   LogOut,
   User,
-  Wrench
+  Wrench,
+  Building2
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -20,7 +21,7 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
   Admin: ['dashboard', 'bookings', 'staff', 'inventory', 'reports', 'settings'],
   Manager: ['dashboard', 'bookings', 'staff', 'inventory', 'reports'],
   'Service Advisor': ['dashboard', 'bookings'],
-  'Super Admin': ['dashboard', 'bookings', 'staff', 'inventory', 'reports', 'settings', 'user-management'],
+  'Super Admin': ['dashboard', 'bookings', 'staff', 'inventory', 'reports', 'settings', 'user-management', 'corporate-data'],
 };
 
 export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
@@ -36,7 +37,8 @@ export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
     { id: 'inventory', label: 'Inventory', icon: Package },
     { id: 'reports', label: 'Reports', icon: FileBarChart },
     { id: 'settings', label: 'Settings', icon: Settings },
-    { id: 'user-management', label: 'User Management', icon: User }
+    { id: 'user-management', label: 'User Management', icon: User },
+    { id: 'corporate-data', label: 'Corporate Data', icon: Building2 }
   ];
 
   const handleLogout = () => {
