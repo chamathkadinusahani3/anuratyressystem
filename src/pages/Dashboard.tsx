@@ -10,6 +10,7 @@ import { BookingsPage } from './BookingsPage';
 import { StaffPage } from './StaffPage';
 import { InventoryPage } from './InventoryPage';
 import { ReportsPage } from './ReportsPage';
+import { CustomersPage } from './CustomersPage';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -286,13 +287,11 @@ function UserMenu({ user, onLogout }: { user: DashboardProps['user']; onLogout: 
 
       {open && (
         <div className="absolute right-0 top-full mt-2 w-52 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl z-50 overflow-hidden">
-          {/* User info */}
           <div className="px-4 py-3 border-b border-neutral-800">
             <p className="text-sm font-bold text-white">{user.name}</p>
             <p className="text-xs text-neutral-500">{user.role}</p>
             <p className="text-xs text-neutral-600 mt-0.5 font-mono">@{user.username}</p>
           </div>
-          {/* Logout */}
           <button
             onClick={() => { setOpen(false); onLogout(); }}
             className="w-full px-4 py-3 flex items-center gap-3 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
@@ -353,12 +352,10 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Close mobile menu when tab changes
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [activeTab]);
 
-  // Prevent body scroll when mobile menu is open
   useEffect(() => {
     if (mobileMenuOpen) {
       document.body.style.overflow = 'hidden';
@@ -399,7 +396,6 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
         </div>
         <div className="lg:col-span-1 space-y-6 md:space-y-8">
           <StaffAssignment />
-          
         </div>
       </div>
     </div>
@@ -407,15 +403,16 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'dashboard': return dashboardHome;
-      case 'bookings':  return <BookingsPage />;
-      case 'staff':     return <StaffPage />;
-      case 'inventory': return <InventoryPage />;
-      case 'reports':   return <ReportsPage />;
-      case 'settings':  return <SettingsPage />;
+      case 'dashboard':      return dashboardHome;
+      case 'bookings':       return <BookingsPage />;
+      case 'staff':          return <StaffPage />;
+      case 'inventory':      return <InventoryPage />;
+      case 'reports':        return <ReportsPage />;
+      case 'settings':       return <SettingsPage />;
       case 'user-management': return <UserManagement />;
       case 'corporate-data': return <CorporateManagementPage />;
-      default:          return <div className="text-white">Page not found</div>;
+      case 'customers':      return <CustomersPage />;   // ← ADDED
+      default:               return <div className="text-white">Page not found</div>;
     }
   };
 
@@ -429,7 +426,7 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
       {/* Mobile Sidebar Overlay */}
       {mobileMenuOpen && (
         <>
-          <div 
+          <div
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
             onClick={() => setMobileMenuOpen(false)}
           />
@@ -442,7 +439,7 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
       <main className="lg:pl-64 min-h-screen">
         <header className="h-14 md:h-16 border-b border-neutral-800 flex items-center justify-between px-3 md:px-8 sticky top-0 bg-black/80 backdrop-blur-md z-40">
           <div className="flex items-center gap-3">
-            <MobileMenuButton 
+            <MobileMenuButton
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               isOpen={mobileMenuOpen}
             />
@@ -457,15 +454,10 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
           </div>
 
           <div className="flex items-center gap-2 md:gap-6">
-            {/* Mobile Search Toggle */}
             <MobileSearchToggle onClick={() => setMobileSearchOpen(!mobileSearchOpen)} />
-
-            {/* Desktop Search */}
             <div className="hidden md:block">
               <GlobalSearch onNavigate={setActiveTab} />
             </div>
-
-            {/* Notifications */}
             <div ref={notifRef} className="relative">
               <button onClick={() => { setShowNotifications(v => !v); setUnreadCount(0); }}
                 className="relative text-neutral-400 hover:text-[#FFD700] transition-colors p-2">
@@ -478,13 +470,10 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
               </button>
               {showNotifications && <NotificationsPanel onClose={() => setShowNotifications(false)} />}
             </div>
-
-            {/* User menu with logout */}
             <UserMenu user={user} onLogout={onLogout} />
           </div>
         </header>
 
-        {/* Mobile Search Bar */}
         {mobileSearchOpen && (
           <div className="md:hidden px-3 py-3 border-b border-neutral-800 bg-black">
             <GlobalSearch onNavigate={(tab) => { setActiveTab(tab); setMobileSearchOpen(false); }} />

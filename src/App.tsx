@@ -62,6 +62,7 @@ export function App() {
 
         {/* Fallback for unknown routes */}
         <Route path="*" element={<Navigate to={user ? "/" : "/login"} replace />} />
+        
       </Routes>
     </BrowserRouter>
   );

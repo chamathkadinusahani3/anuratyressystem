@@ -1,14 +1,7 @@
+import React from 'react';
 import {
-  LayoutDashboard,
-  Calendar,
-  Users,
-  Package,
-  FileBarChart,
-  Settings,
-  LogOut,
-  User,
-  Wrench,
-  Building2
+  LayoutDashboard, Calendar, Users, Package,
+  FileBarChart, Settings, LogOut, User, Wrench, Building2,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -16,29 +9,29 @@ interface SidebarProps {
   setActiveTab: (tab: string) => void;
 }
 
-// Role Permissions
 const ROLE_PERMISSIONS: Record<string, string[]> = {
-  Admin: ['dashboard', 'bookings', 'staff', 'inventory', 'reports', 'settings'],
-  Manager: ['dashboard', 'bookings', 'staff', 'inventory', 'reports'],
+  Admin:          ['dashboard', 'bookings', 'staff', 'inventory', 'reports', 'settings'],
+  Manager:        ['dashboard', 'bookings', 'staff', 'inventory', 'reports'],
   'Service Advisor': ['dashboard', 'bookings'],
-  'Super Admin': ['dashboard', 'bookings', 'staff', 'inventory', 'reports', 'settings', 'user-management', 'corporate-data'],
+  'Super Admin':  ['dashboard', 'bookings', 'staff', 'inventory', 'reports', 'settings', 'user-management', 'corporate-data', 'customers'],
 };
 
 export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
   const user = JSON.parse(localStorage.getItem('at_user') || '{}');
   const role = user.role || '';
-  
+
   const hasPermission = (tab: string) => ROLE_PERMISSIONS[role]?.includes(tab);
 
   const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'bookings', label: 'Bookings', icon: Calendar },
-    { id: 'staff', label: 'Staff', icon: Wrench },
-    { id: 'inventory', label: 'Inventory', icon: Package },
-    { id: 'reports', label: 'Reports', icon: FileBarChart },
-    { id: 'settings', label: 'Settings', icon: Settings },
-    { id: 'user-management', label: 'User Management', icon: User },
-    { id: 'corporate-data', label: 'Corporate Data', icon: Building2 }
+    { id: 'dashboard',       label: 'Dashboard',        icon: LayoutDashboard },
+    { id: 'bookings',        label: 'Bookings',          icon: Calendar },
+    { id: 'staff',           label: 'Staff',             icon: Wrench },
+    { id: 'inventory',       label: 'Inventory',         icon: Package },
+    { id: 'reports',         label: 'Reports',           icon: FileBarChart },
+    { id: 'settings',        label: 'Settings',          icon: Settings },
+    { id: 'user-management', label: 'User Management',   icon: User },
+    { id: 'corporate-data',  label: 'Corporate Data',    icon: Building2 },
+    { id: 'customers',       label: 'Customers',         icon: Users },
   ];
 
   const handleLogout = () => {
@@ -60,10 +53,10 @@ export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 py-6 px-3 space-y-1">
+      <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto">
         {menuItems
           .filter(item => hasPermission(item.id))
-          .map((item) => {
+          .map(item => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (
@@ -72,8 +65,9 @@ export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
                 onClick={() => setActiveTab(item.id)}
                 className={`w-full flex items-center px-3 py-3 text-sm font-medium rounded-md transition-all duration-200 group
                   ${isActive
-                      ? 'bg-[#FFD700] text-black'
-                      : 'text-neutral-400 hover:bg-neutral-900 hover:text-[#FFD700]'}`}
+                    ? 'bg-[#FFD700] text-black'
+                    : 'text-neutral-400 hover:bg-neutral-900 hover:text-[#FFD700]'
+                  }`}
               >
                 <Icon className={`mr-3 h-5 w-5 transition-colors ${isActive ? 'text-black' : 'text-neutral-500 group-hover:text-[#FFD700]'}`} />
                 {item.label}
