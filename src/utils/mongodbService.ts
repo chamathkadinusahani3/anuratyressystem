@@ -3,8 +3,9 @@
  * Handles API calls to serverless MongoDB backend
  */
 
-// API Configuration
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://your-api-endpoint.com/api';
+// ✅ FIX 1: Was using VITE_API_BASE_URL (wrong name) → now uses VITE_API_URL
+// ✅ FIX 2: Was falling back to 'https://your-api-endpoint.com/api' (placeholder) → real URL
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'https://anuratyres-backend-emm1774.vercel.app/api').replace(/\/$/, '');
 
 export interface CorporateCompany {
   _id: string;
@@ -44,275 +45,10 @@ export interface Employee {
   updatedAt?: string;
 }
 
-export interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  message?: string;
-  error?: string;
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// CORPORATE COMPANIES API
-// ═══════════════════════════════════════════════════════════════════
-
-/**
- * Fetch all corporate companies from MongoDB
- */
-export async function fetchAllCorporateCompanies(): Promise<ApiResponse<CorporateCompany[]>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/corporate/companies`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        // Add authentication token if required
-        // 'Authorization': `Bearer ${getAuthToken()}`
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-      success: true,
-      data: data.companies || data
-    };
-  } catch (error: any) {
-    console.error('Error fetching corporate companies:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to fetch corporate companies'
-    };
-  }
-}
-
-/**
- * Fetch single corporate company by ID
- */
-export async function fetchCorporateCompanyById(id: string): Promise<ApiResponse<CorporateCompany>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/corporate/companies/${id}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-      success: true,
-      data: data.company || data
-    };
-  } catch (error: any) {
-    console.error('Error fetching corporate company:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to fetch corporate company'
-    };
-  }
-}
-
-/**
- * Search corporate companies by name or code
- */
-export async function searchCorporateCompanies(query: string): Promise<ApiResponse<CorporateCompany[]>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/corporate/companies/search?q=${encodeURIComponent(query)}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-      success: true,
-      data: data.companies || data
-    };
-  } catch (error: any) {
-    console.error('Error searching corporate companies:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to search corporate companies'
-    };
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// EMPLOYEES API
-// ═══════════════════════════════════════════════════════════════════
-
-/**
- * Fetch all employees from MongoDB
- */
-export async function fetchAllEmployees(): Promise<ApiResponse<Employee[]>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/corporate/employees`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-      success: true,
-      data: data.employees || data
-    };
-  } catch (error: any) {
-    console.error('Error fetching employees:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to fetch employees'
-    };
-  }
-}
-
-/**
- * Fetch employees by corporate code
- */
-export async function fetchEmployeesByCompany(corporateCode: string): Promise<ApiResponse<Employee[]>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/corporate/employees?corporateCode=${corporateCode}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-      success: true,
-      data: data.employees || data
-    };
-  } catch (error: any) {
-    console.error('Error fetching employees by company:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to fetch employees'
-    };
-  }
-}
-
-/**
- * Fetch single employee by ID
- */
-export async function fetchEmployeeById(id: string): Promise<ApiResponse<Employee>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/corporate/employees/${id}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-      success: true,
-      data: data.employee || data
-    };
-  } catch (error: any) {
-    console.error('Error fetching employee:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to fetch employee'
-    };
-  }
-}
-
-/**
- * Search employees by name, email, or discount ID
- */
-export async function searchEmployees(query: string): Promise<ApiResponse<Employee[]>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/corporate/employees/search?q=${encodeURIComponent(query)}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-      success: true,
-      data: data.employees || data
-    };
-  } catch (error: any) {
-    console.error('Error searching employees:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to search employees'
-    };
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// COMBINED DATA API
-// ═══════════════════════════════════════════════════════════════════
-
 export interface CorporateWithEmployees extends CorporateCompany {
   employees: Employee[];
   employeeCount: number;
 }
-
-/**
- * Fetch all corporate companies with their employees
- */
-export async function fetchCorporateWithEmployees(): Promise<ApiResponse<CorporateWithEmployees[]>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/corporate/complete`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-      success: true,
-      data: data.companies || data
-    };
-  } catch (error: any) {
-    console.error('Error fetching corporate data with employees:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to fetch corporate data'
-    };
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// STATISTICS API
-// ═══════════════════════════════════════════════════════════════════
 
 export interface CorporateStats {
   totalCompanies: number;
@@ -328,199 +64,147 @@ export interface CorporateStats {
   }>;
 }
 
-/**
- * Fetch corporate statistics
- */
-export async function fetchCorporateStats(): Promise<ApiResponse<CorporateStats>> {
+export interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  message?: string;
+  error?: string;
+}
+
+// ─── Generic fetch helper ─────────────────────────────────────────────────────
+async function apiFetch<T>(path: string, options?: RequestInit): Promise<ApiResponse<T>> {
   try {
-    const response = await fetch(`${API_BASE_URL}/corporate/stats`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      }
+    const res  = await fetch(`${API_BASE_URL}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
     });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-      success: true,
-      data: data.stats || data
-    };
-  } catch (error: any) {
-    console.error('Error fetching corporate stats:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to fetch corporate statistics'
-    };
+    const json = await res.json();
+    if (!res.ok) return { success: false, error: json.message || `HTTP ${res.status}` };
+    return { success: true, data: json };
+  } catch (err: any) {
+    console.error(`[mongodbService] ${path}:`, err);
+    return { success: false, error: err.message || 'Network error' };
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// UPDATE STATUS API
+// CORPORATE COMPANIES
 // ═══════════════════════════════════════════════════════════════════
 
-/**
- * Update corporate company status
- */
+export async function fetchAllCorporateCompanies(): Promise<ApiResponse<CorporateCompany[]>> {
+  const res = await apiFetch<any>('/corporate/companies');
+  if (res.success && res.data) return { success: true, data: res.data.companies ?? res.data };
+  return { success: false, error: res.error };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// EMPLOYEES
+// ═══════════════════════════════════════════════════════════════════
+
+export async function fetchAllEmployees(corporateCode?: string): Promise<ApiResponse<Employee[]>> {
+  const qs  = corporateCode ? `?corporateCode=${encodeURIComponent(corporateCode)}` : '';
+  const res = await apiFetch<any>(`/corporate/employees${qs}`);
+  if (res.success && res.data) return { success: true, data: res.data.employees ?? res.data };
+  return { success: false, error: res.error };
+}
+
+export async function fetchEmployeesByCompany(corporateCode: string): Promise<ApiResponse<Employee[]>> {
+  return fetchAllEmployees(corporateCode);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// COMBINED (companies + their employees in one call)
+// ═══════════════════════════════════════════════════════════════════
+
+export async function fetchCorporateWithEmployees(): Promise<ApiResponse<CorporateWithEmployees[]>> {
+  const res = await apiFetch<any>('/corporate/complete');
+  if (res.success && res.data) return { success: true, data: res.data.companies ?? res.data };
+  return { success: false, error: res.error };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// STATISTICS
+// ═══════════════════════════════════════════════════════════════════
+
+export async function fetchCorporateStats(): Promise<ApiResponse<CorporateStats>> {
+  const res = await apiFetch<any>('/corporate/stats');
+  if (res.success && res.data) return { success: true, data: res.data.stats ?? res.data };
+  return { success: false, error: res.error };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// STATUS UPDATES
+// ✅ FIX 3: Old code called /corporate/companies/${id}/status (split-file pattern)
+//           New consolidated corporate.js expects PATCH /corporate/company-status
+//           with { id, status } in the request body
+// ═══════════════════════════════════════════════════════════════════
+
 export async function updateCompanyStatus(
-  id: string, 
+  id: string,
   status: 'active' | 'inactive' | 'suspended'
 ): Promise<ApiResponse<CorporateCompany>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/corporate/companies/${id}/status`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ status })
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-      success: true,
-      data: data.company || data,
-      message: 'Status updated successfully'
-    };
-  } catch (error: any) {
-    console.error('Error updating company status:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to update company status'
-    };
-  }
+  return apiFetch('/corporate/company-status', {
+    method: 'PATCH',
+    body:   JSON.stringify({ id, status }),
+  });
 }
 
-/**
- * Update employee status
- */
 export async function updateEmployeeStatus(
-  id: string, 
+  id: string,
   status: 'active' | 'inactive'
 ): Promise<ApiResponse<Employee>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/corporate/employees/${id}/status`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ status })
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-      success: true,
-      data: data.employee || data,
-      message: 'Status updated successfully'
-    };
-  } catch (error: any) {
-    console.error('Error updating employee status:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to update employee status'
-    };
-  }
+  return apiFetch('/corporate/employee-status', {
+    method: 'PATCH',
+    body:   JSON.stringify({ id, status }),
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// EXPORT DATA API
+// CSV EXPORT (generated client-side — no extra backend endpoints needed)
 // ═══════════════════════════════════════════════════════════════════
 
-/**
- * Export corporate data as CSV
- */
+function downloadCSV(filename: string, rows: string[][]): void {
+  const csv  = rows.map(r =>
+    r.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')
+  ).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function exportCorporateDataCSV(): Promise<void> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/corporate/export/csv`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'text/csv',
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `corporate_data_${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
-  } catch (error) {
-    console.error('Error exporting corporate data:', error);
-    throw error;
-  }
+  const result = await fetchAllCorporateCompanies();
+  if (!result.success || !result.data) throw new Error(result.error || 'Failed to fetch companies');
+  const header = ['Company Name','Contact Person','Email','Phone','Business Type','Corporate Code','Status','Registered Date','Booking Count'];
+  const rows   = result.data.map(c => [
+    c.companyName, c.contactPerson, c.email, c.phone, c.businessType,
+    c.corporateCode, c.status, new Date(c.registeredDate).toLocaleDateString(), String(c.bookingCount),
+  ]);
+  downloadCSV(`anura_tyres_companies_${new Date().toISOString().split('T')[0]}.csv`, [header, ...rows]);
 }
 
-/**
- * Export employee data as CSV
- */
 export async function exportEmployeeDataCSV(): Promise<void> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/corporate/employees/export/csv`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'text/csv',
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `employee_data_${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
-  } catch (error) {
-    console.error('Error exporting employee data:', error);
-    throw error;
-  }
+  const result = await fetchAllEmployees();
+  if (!result.success || !result.data) throw new Error(result.error || 'Failed to fetch employees');
+  const header = ['Name','Email','Phone','Company','Corporate Code','Discount ID','Department','Vehicle No','Status','Registered Date'];
+  const rows   = result.data.map(e => [
+    e.employeeName, e.employeeEmail, e.employeePhone, e.companyName,
+    e.corporateCode, e.employeeDiscountId, e.department ?? '', e.vehicleNo ?? '',
+    e.status, new Date(e.registeredDate).toLocaleDateString(),
+  ]);
+  downloadCSV(`anura_tyres_employees_${new Date().toISOString().split('T')[0]}.csv`, [header, ...rows]);
 }
 
 export default {
-  // Companies
   fetchAllCorporateCompanies,
-  fetchCorporateCompanyById,
-  searchCorporateCompanies,
-  
-  // Employees
   fetchAllEmployees,
   fetchEmployeesByCompany,
-  fetchEmployeeById,
-  searchEmployees,
-  
-  // Combined
   fetchCorporateWithEmployees,
-  
-  // Stats
   fetchCorporateStats,
-  
-  // Updates
   updateCompanyStatus,
   updateEmployeeStatus,
-  
-  // Export
   exportCorporateDataCSV,
-  exportEmployeeDataCSV
+  exportEmployeeDataCSV,
 };

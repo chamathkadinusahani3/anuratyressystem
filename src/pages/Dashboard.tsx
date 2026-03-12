@@ -179,7 +179,7 @@ function RecentBookingsTable({ onViewAll }: { onViewAll: () => void }) {
 
   const changeStatus = async (id: string, status: BookingStatus) => {
     try {
-      await fetch(`${API_URL}/bookings/${id}/status`, {
+      await fetch(`${API_URL}/bookings/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),

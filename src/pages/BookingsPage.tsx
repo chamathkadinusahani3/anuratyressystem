@@ -8,8 +8,10 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card';
+import { AlertTriangle } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+// ✅ FIX: API_URL must NOT have trailing slash. VITE_API_URL = https://xxx.vercel.app/api
+const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type BookingStatus = 'Pending' | 'In Progress' | 'Completed' | 'Cancelled' | 'Waiting';
@@ -29,79 +31,49 @@ interface Booking {
 }
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
-
 const BRANCHES = [
-  {
-    id: '1',
-    name: 'Pannipitiya Branch',
-    address: '278/2 High Level Rd, Pannipitiya',
-    phone: '077 578 5785',
-    hasFullService: true,
-    maxBookingsPerSlot: 3
-  },
-  {
-    id: '2',
-    name: 'Ratnapura Branch',
-    address: '151 Colombo Rd, Ratnapura',
-    phone: '076 688 5885  ',
-    hasFullService: false,
-    maxBookingsPerSlot: 2
-  },
-  {
-    id: '3',
-    name: 'Kalawana Branch',
-    address: 'Rathnapura road, Kalawana',
-    phone: '0777 32 95 32  ',
-    hasFullService: false,
-    maxBookingsPerSlot: 2
-  },
-  {
-    id: '4',
-    name: 'Nivithigala Branch',
-    address: 'Tiruwanaketiya-Agalawatte Rd, Nivithigala',
-    phone: '045 227 9396',
-    hasFullService: false,
-    maxBookingsPerSlot: 2
-  }
+  { id: '1', name: 'Pannipitiya Branch',  address: '278/2 High Level Rd, Pannipitiya',              phone: '077 578 5785',  hasFullService: true,  maxBookingsPerSlot: 3 },
+  { id: '2', name: 'Ratnapura Branch',    address: '151 Colombo Rd, Ratnapura',                     phone: '076 688 5885',  hasFullService: false, maxBookingsPerSlot: 2 },
+  { id: '3', name: 'Kalawana Branch',     address: 'Rathnapura road, Kalawana',                     phone: '0777 32 95 32', hasFullService: false, maxBookingsPerSlot: 2 },
+  { id: '4', name: 'Nivithigala Branch',  address: 'Tiruwanaketiya-Agalawatte Rd, Nivithigala',     phone: '045 227 9396',  hasFullService: false, maxBookingsPerSlot: 2 },
 ];
-
 
 const SERVICE_CATEGORIES = [
   { id: 'Anura Tyres', label: 'Anura Tyres', description: 'Tyre fitting, balancing & alignment' },
-  { id: 'Mechanix', label: 'Mechanix', description: 'Full mechanical services' },
+  { id: 'Mechanix',    label: 'Mechanix',    description: 'Full mechanical services' },
   { id: 'Truck & Bus', label: 'Truck & Bus', description: 'Heavy vehicle services' },
 ];
 
 const SERVICES = [
-  { id: 't1', name: 'Wheel Alignment', category: 'Anura Tyres' },
-  { id: 't2', name: 'Wheel Balancing', category: 'Anura Tyres' },
-  { id: 't3', name: 'Tyre Change', category: 'Anura Tyres' },
-  { id: 't4', name: 'Tyre Repair (Puncture)', category: 'Anura Tyres' },
-  { id: 't5', name: 'Nitrogen Filling', category: 'Anura Tyres' },
-  { id: 'm1', name: 'Full Service', category: 'Mechanix' },
-  { id: 'm2', name: 'Oil Change', category: 'Mechanix' },
-  { id: 'm3', name: 'Battery Check & Replace', category: 'Mechanix' },
-  { id: 'm4', name: 'Brake Service', category: 'Mechanix' },
-  { id: 'm5', name: 'AC Service', category: 'Mechanix' },
-  { id: 'b1', name: 'Heavy Vehicle Alignment', category: 'Truck & Bus' },
-  { id: 'b2', name: 'Truck Tyre Change', category: 'Truck & Bus' },
-  { id: 'b3', name: 'Bus Full Service', category: 'Truck & Bus' },
+  { id: 't1', name: 'Wheel Alignment',           category: 'Anura Tyres' },
+  { id: 't2', name: 'Wheel Balancing',            category: 'Anura Tyres' },
+  { id: 't3', name: 'Tyre Change',                category: 'Anura Tyres' },
+  { id: 't4', name: 'Tyre Repair (Puncture)',     category: 'Anura Tyres' },
+  { id: 't5', name: 'Nitrogen Filling',           category: 'Anura Tyres' },
+  { id: 'm1', name: 'Full Service',               category: 'Mechanix' },
+  { id: 'm2', name: 'Oil Change',                 category: 'Mechanix' },
+  { id: 'm3', name: 'Battery Check & Replace',    category: 'Mechanix' },
+  { id: 'm4', name: 'Brake Service',              category: 'Mechanix' },
+  { id: 'm5', name: 'AC Service',                 category: 'Mechanix' },
+  { id: 'b1', name: 'Heavy Vehicle Alignment',    category: 'Truck & Bus' },
+  { id: 'b2', name: 'Truck Tyre Change',          category: 'Truck & Bus' },
+  { id: 'b3', name: 'Bus Full Service',           category: 'Truck & Bus' },
 ];
 
 const TIME_SLOTS = [
-  '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00',
-  '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30',
-  '17:00', '17:30', '18:00', '18:30', '19:00'
+  '08:30','09:00','09:30','10:00','10:30','11:00','11:30','12:00',
+  '13:00','13:30','14:00','14:30','15:00','15:30','16:00','16:30',
+  '17:00','17:30','18:00','18:30','19:00',
 ];
 
-// ─── Status Badge Helper ───────────────────────────────────────────────────────
+// ─── Status Badge Helper ──────────────────────────────────────────────────────
 function statusBadge(status: BookingStatus) {
   const map: Record<BookingStatus, string> = {
-    'Pending': 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
-    'In Progress': 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
-    'Completed': 'bg-green-500/20 text-green-400 border border-green-500/30',
-    'Cancelled': 'bg-red-500/20 text-red-400 border border-red-500/30',
-    'Waiting': 'bg-orange-500/20 text-orange-400 border border-orange-500/30',
+    'Pending':     'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+    'In Progress': 'bg-blue-500/20   text-blue-400   border border-blue-500/30',
+    'Completed':   'bg-green-500/20  text-green-400  border border-green-500/30',
+    'Cancelled':   'bg-red-500/20    text-red-400    border border-red-500/30',
+    'Waiting':     'bg-orange-500/20 text-orange-400 border border-orange-500/30',
   };
   return (
     <span className={`px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${map[status]}`}>
@@ -113,8 +85,8 @@ function statusBadge(status: BookingStatus) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // MANUAL BOOKING FORM MODAL
 // ═══════════════════════════════════════════════════════════════════════════════
-function ManualBookingModal({ onClose, onSuccess, existingBookings }: { 
-  onClose: () => void; 
+function ManualBookingModal({ onClose, onSuccess, existingBookings }: {
+  onClose: () => void;
   onSuccess: () => void;
   existingBookings: Booking[];
 }) {
@@ -123,88 +95,66 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings }: {
   const [availableSlots, setAvailableSlots] = useState<string[]>(TIME_SLOTS);
   const [form, setForm] = useState({
     branchId: '', category: '', serviceIds: [] as string[],
-    date: '', timeSlot: '', name: '', email: '', phone: '', vehicleNo: ''
+    date: '', timeSlot: '', name: '', email: '', phone: '', vehicleNo: '',
   });
 
   const branch = BRANCHES.find(b => b.id === form.branchId);
   const categories = branch?.hasFullService ? SERVICE_CATEGORIES : SERVICE_CATEGORIES.filter(c => c.id === 'Anura Tyres');
   const services = SERVICES.filter(s => s.category === form.category);
 
-  // Check slot availability when branch or date changes
   useEffect(() => {
-    if (form.branchId && form.date) {
-      checkSlotAvailability();
-    } else {
-      setAvailableSlots(TIME_SLOTS);
-    }
+    if (form.branchId && form.date) checkSlotAvailability();
+    else setAvailableSlots(TIME_SLOTS);
   }, [form.branchId, form.date, existingBookings]);
 
   const checkSlotAvailability = () => {
     if (!form.branchId || !form.date) return;
-    
-    const branch = BRANCHES.find(b => b.id === form.branchId);
-    if (!branch) return;
-
-    // Get bookings for this branch and date (excluding cancelled ones)
+    const b = BRANCHES.find(b => b.id === form.branchId);
+    if (!b) return;
     const dateBookings = existingBookings.filter(
-      b => b.branch === branch.name && b.date === form.date && b.status !== 'Cancelled'
+      bk => bk.branch === b.name && bk.date === form.date && bk.status !== 'Cancelled'
     );
-
-    // Count bookings per time slot
     const slotCounts = new Map<string, number>();
-    dateBookings.forEach(b => {
-      if (b.timeSlot) {
-        slotCounts.set(b.timeSlot, (slotCounts.get(b.timeSlot) || 0) + 1);
-      }
+    dateBookings.forEach(bk => {
+      if (bk.timeSlot) slotCounts.set(bk.timeSlot, (slotCounts.get(bk.timeSlot) || 0) + 1);
     });
-
-    // Filter out fully booked slots
-    const available = TIME_SLOTS.filter(slot => {
-      const count = slotCounts.get(slot) || 0;
-      return count < branch.maxBookingsPerSlot;
-    });
-
-    setAvailableSlots(available);
+    setAvailableSlots(TIME_SLOTS.filter(slot => (slotCounts.get(slot) || 0) < b.maxBookingsPerSlot));
   };
 
   const toggle = (id: string) => setForm(f => ({
     ...f,
-    serviceIds: f.serviceIds.includes(id) ? f.serviceIds.filter(x => x !== id) : [...f.serviceIds, id]
+    serviceIds: f.serviceIds.includes(id) ? f.serviceIds.filter(x => x !== id) : [...f.serviceIds, id],
   }));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.branchId) return setError('Please select a branch');
-    if (!form.category) return setError('Please select a category');
+    if (!form.branchId)              return setError('Please select a branch');
+    if (!form.category)              return setError('Please select a category');
     if (form.serviceIds.length === 0) return setError('Please select at least one service');
-    if (!form.date) return setError('Please select a date');
-    if (!form.timeSlot) return setError('Please select a time slot');
+    if (!form.date)                  return setError('Please select a date');
+    if (!form.timeSlot)              return setError('Please select a time slot');
+    if (!availableSlots.includes(form.timeSlot)) return setError('This time slot is now fully booked.');
 
     setLoading(true);
     setError(null);
     try {
       const b = BRANCHES.find(b => b.id === form.branchId)!;
       const svcs = SERVICES.filter(s => form.serviceIds.includes(s.id));
-      
-      // Check if slot is still available
-      if (!availableSlots.includes(form.timeSlot)) {
-        throw new Error('This time slot is now fully booked. Please select another slot.');
-      }
 
       const res = await fetch(`${API_URL}/bookings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          branch: { id: b.id, name: b.name, address: b.address, phone: b.phone },
+          branch:   { id: b.id, name: b.name, address: b.address, phone: b.phone },
           category: form.category,
           services: svcs.map(s => ({ id: s.id, name: s.name, category: s.category })),
-          date: new Date(form.date),
+          date:     new Date(form.date),
           timeSlot: form.timeSlot,
-          customer: { name: form.name, email: form.email, phone: form.phone, vehicleNo: form.vehicleNo }
-        })
+          customer: { name: form.name, email: form.email, phone: form.phone, vehicleNo: form.vehicleNo },
+        }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed');
+      if (!res.ok) throw new Error(data.message || 'Failed to create booking');
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -246,8 +196,8 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings }: {
                   <button key={c.id} type="button"
                     onClick={() => setForm({...form, category: c.id, serviceIds: []})}
                     className={`p-3 rounded-lg border text-sm font-medium transition-all ${
-                      form.category === c.id 
-                        ? 'bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]' 
+                      form.category === c.id
+                        ? 'bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]'
                         : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-500'}`}>
                     {c.label}
                   </button>
@@ -284,25 +234,21 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings }: {
             </div>
             <div>
               <label className="text-sm font-medium text-white block mb-1.5">
-                Time Slot * 
+                Time Slot *
                 {form.date && availableSlots.length < TIME_SLOTS.length && (
                   <span className="text-xs text-orange-400 ml-2">({TIME_SLOTS.length - availableSlots.length} slots full)</span>
                 )}
               </label>
               <select value={form.timeSlot} onChange={e => setForm({...form, timeSlot: e.target.value})}
-                className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors" required
-                disabled={!form.date || availableSlots.length === 0}>
+                className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors"
+                required disabled={!form.date || availableSlots.length === 0}>
                 <option value="">Select time...</option>
-                {availableSlots.length === 0 && form.date ? (
-                  <option value="" disabled>All slots fully booked</option>
-                ) : (
-                  availableSlots.map(t => <option key={t} value={t}>{t}</option>)
-                )}
+                {availableSlots.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
               {availableSlots.length === 0 && form.date && (
                 <p className="text-xs text-orange-400 mt-1.5 flex items-start gap-1">
                   <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                  <span>All time slots are fully booked for this date. Please select another date.</span>
+                  <span>All time slots are fully booked for this date.</span>
                 </p>
               )}
             </div>
@@ -344,7 +290,7 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings }: {
               className="flex-1 px-4 py-2.5 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 transition-colors disabled:opacity-50">
               Cancel
             </button>
-            <button type="submit" disabled={loading || (form.date && availableSlots.length === 0)}
+            <button type="submit" disabled={loading || (!!form.date && availableSlots.length === 0)}
               className="flex-1 px-4 py-2.5 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
               {loading ? <><RefreshCw className="w-4 h-4 animate-spin" /> Creating...</> : 'Create Booking'}
             </button>
@@ -354,9 +300,6 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings }: {
     </div>
   );
 }
-
-// Import AlertTriangle for the warning message
-import { AlertTriangle } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CALENDAR VIEW MODAL
@@ -380,11 +323,11 @@ function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: ()
   const isToday = (day: number) => day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
 
   const statusDot: Record<BookingStatus, string> = {
-    'Pending': 'bg-yellow-500',
+    'Pending':     'bg-yellow-500',
     'In Progress': 'bg-blue-500',
-    'Completed': 'bg-green-500',
-    'Cancelled': 'bg-red-500',
-    'Waiting': 'bg-orange-500',
+    'Completed':   'bg-green-500',
+    'Cancelled':   'bg-red-500',
+    'Waiting':     'bg-orange-500',
   };
 
   return (
@@ -400,7 +343,6 @@ function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: ()
         </div>
 
         <div className="p-4 md:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Calendar Grid */}
           <div className="lg:col-span-2 bg-neutral-800 rounded-xl border border-neutral-700 p-4 md:p-5">
             <div className="flex items-center justify-between mb-5">
               <button onClick={() => setCurrentDate(new Date(year, month - 1, 1))}
@@ -415,13 +357,11 @@ function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: ()
                 <ChevronRight className="w-5 h-5" />
               </button>
             </div>
-
             <div className="grid grid-cols-7 gap-1 mb-2">
               {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(d => (
                 <div key={d} className="text-center text-xs font-semibold text-neutral-500 py-2">{d}</div>
               ))}
             </div>
-
             <div className="grid grid-cols-7 gap-1">
               {Array.from({ length: firstDay }, (_, i) => <div key={`e-${i}`} />)}
               {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
@@ -449,7 +389,6 @@ function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: ()
             </div>
           </div>
 
-          {/* Day Details */}
           <div className="bg-neutral-800 rounded-xl border border-neutral-700 p-4 md:p-5">
             <h3 className="font-bold text-white mb-4 text-sm md:text-base">
               {selectedDay
@@ -486,7 +425,7 @@ function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: ()
 function BookingDetailModal({ booking, onClose, onStatusChange }: {
   booking: Booking;
   onClose: () => void;
-  onStatusChange: (id: string, status: BookingStatus) => void;
+  onStatusChange: (id: string, status: BookingStatus) => Promise<void>;
 }) {
   const [loading, setLoading] = useState<BookingStatus | null>(null);
 
@@ -549,35 +488,35 @@ function BookingDetailModal({ booking, onClose, onStatusChange }: {
                 <div className="text-sm text-white break-words">{booking.service}</div>
               </div>
             </div>
+            {booking.branch && (
+              <div className="flex items-start gap-2 col-span-1 md:col-span-2">
+                <MapPin className="w-4 h-4 text-[#FFD700] mt-0.5 flex-shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-xs text-neutral-500">Branch</div>
+                  <div className="text-sm text-white break-words">{booking.branch}</div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="border-t border-neutral-800 pt-4">
             <div className="text-xs text-neutral-500 mb-3">Update Status</div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              <button onClick={() => changeStatus('In Progress')} disabled={booking.status === 'In Progress' || loading !== null}
-                className="py-2 px-2 md:px-3 bg-blue-500/20 border border-blue-500/30 text-blue-400 rounded-lg text-xs font-medium hover:bg-blue-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
-                {loading === 'In Progress' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <PlayCircle className="w-3 h-3" />}
-                <span className="hidden sm:inline">In Progress</span>
-                <span className="sm:hidden">Progress</span>
-              </button>
-              <button onClick={() => changeStatus('Completed')} disabled={booking.status === 'Completed' || loading !== null}
-                className="py-2 px-2 md:px-3 bg-green-500/20 border border-green-500/30 text-green-400 rounded-lg text-xs font-medium hover:bg-green-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
-                {loading === 'Completed' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
-                <span className="hidden sm:inline">Completed</span>
-                <span className="sm:hidden">Done</span>
-              </button>
-              <button onClick={() => changeStatus('Cancelled')} disabled={booking.status === 'Cancelled' || loading !== null}
-                className="py-2 px-2 md:px-3 bg-red-500/20 border border-red-500/30 text-red-400 rounded-lg text-xs font-medium hover:bg-red-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
-                {loading === 'Cancelled' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
-                <span className="hidden sm:inline">Cancelled</span>
-                <span className="sm:hidden">Cancel</span>
-              </button>
-              <button onClick={() => changeStatus('Waiting')} disabled={booking.status === 'Waiting' || loading !== null}
-                className="py-2 px-2 md:px-3 bg-orange-500/20 border border-orange-500/30 text-orange-400 rounded-lg text-xs font-medium hover:bg-orange-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5">
-                {loading === 'Waiting' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <List className="w-3 h-3" />}
-                <span className="hidden sm:inline">Waiting</span>
-                <span className="sm:hidden">Wait</span>
-              </button>
+              {([
+                { status: 'In Progress' as BookingStatus, color: 'blue',   icon: <PlayCircle className="w-3 h-3" />,  label: 'In Progress', short: 'Progress' },
+                { status: 'Completed'  as BookingStatus, color: 'green',  icon: <CheckCircle className="w-3 h-3" />, label: 'Completed',   short: 'Done' },
+                { status: 'Cancelled'  as BookingStatus, color: 'red',    icon: <XCircle className="w-3 h-3" />,     label: 'Cancelled',   short: 'Cancel' },
+                { status: 'Waiting'    as BookingStatus, color: 'orange', icon: <List className="w-3 h-3" />,         label: 'Waiting',     short: 'Wait' },
+              ]).map(({ status, color, icon, label, short }) => (
+                <button key={status}
+                  onClick={() => changeStatus(status)}
+                  disabled={booking.status === status || loading !== null}
+                  className={`py-2 px-2 md:px-3 bg-${color}-500/20 border border-${color}-500/30 text-${color}-400 rounded-lg text-xs font-medium hover:bg-${color}-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5`}>
+                  {loading === status ? <RefreshCw className="w-3 h-3 animate-spin" /> : icon}
+                  <span className="hidden sm:inline">{label}</span>
+                  <span className="sm:hidden">{short}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -590,17 +529,12 @@ function BookingDetailModal({ booking, onClose, onStatusChange }: {
 // PRINT VIEW
 // ═══════════════════════════════════════════════════════════════════════════════
 function PrintView({ bookings, onClose }: { bookings: Booking[]; onClose: () => void }) {
-  const handlePrint = () => {
-    window.print();
-  };
-
   return (
     <div className="fixed inset-0 bg-white z-50 overflow-auto">
-      {/* Screen-only controls */}
       <div className="print:hidden sticky top-0 bg-white border-b border-neutral-300 px-4 md:px-6 py-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-sm">
         <h2 className="text-lg md:text-xl font-bold text-neutral-900">Print Preview</h2>
         <div className="flex gap-3">
-          <button onClick={handlePrint}
+          <button onClick={() => window.print()}
             className="flex items-center gap-2 px-4 py-2 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors">
             <Printer className="w-4 h-4" /> Print
           </button>
@@ -610,49 +544,38 @@ function PrintView({ bookings, onClose }: { bookings: Booking[]; onClose: () => 
           </button>
         </div>
       </div>
-
-      {/* Print content */}
       <div className="p-4 md:p-8 max-w-7xl mx-auto">
         <div className="mb-6 md:mb-8 text-center">
           <h1 className="text-2xl md:text-3xl font-bold text-neutral-900 mb-2">Anura Tyres - Bookings Report</h1>
           <p className="text-sm md:text-base text-neutral-600">Generated on {new Date().toLocaleString()}</p>
           <p className="text-sm md:text-base text-neutral-600 mt-1">Total Bookings: {bookings.length}</p>
         </div>
-
         <div className="overflow-x-auto">
           <table className="w-full border-collapse border border-neutral-300 text-sm">
             <thead>
               <tr className="bg-neutral-100">
-                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">ID</th>
-                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Date</th>
-                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Time</th>
-                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Customer</th>
-                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Vehicle</th>
-                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Service</th>
-                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Branch</th>
-                <th className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">Status</th>
+                {['ID','Date','Time','Customer','Vehicle','Service','Branch','Status'].map(h => (
+                  <th key={h} className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {bookings.map((booking, idx) => (
-                <tr key={booking.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-neutral-50'}>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs font-mono text-neutral-700">{booking.id}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-900">{booking.date}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-900">{booking.timeSlot || 'N/A'}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-medium text-neutral-900">{booking.customer}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-700">{booking.vehicle || 'N/A'}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-700">{booking.service}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-700">{booking.branch || 'N/A'}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-medium text-neutral-900">{booking.status}</td>
+              {bookings.map((b, idx) => (
+                <tr key={b.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-neutral-50'}>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs font-mono text-neutral-700">{b.id}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-900">{b.date}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-900">{b.timeSlot || 'N/A'}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-medium text-neutral-900">{b.customer}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-700">{b.vehicle || 'N/A'}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-700">{b.service}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-700">{b.branch || 'N/A'}</td>
+                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-medium text-neutral-900">{b.status}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-
-        {bookings.length === 0 && (
-          <div className="text-center py-8 text-neutral-500 text-sm md:text-base">No bookings to display</div>
-        )}
+        {bookings.length === 0 && <div className="text-center py-8 text-neutral-500">No bookings to display</div>}
       </div>
     </div>
   );
@@ -662,15 +585,15 @@ function PrintView({ bookings, onClose }: { bookings: Booking[]; onClose: () => 
 // MAIN BOOKINGS PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 export function BookingsPage() {
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
+  const [bookings, setBookings]         = useState<Booking[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState<string | null>(null);
+  const [search, setSearch]             = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [dateFilter, setDateFilter] = useState<string>('');
+  const [dateFilter, setDateFilter]     = useState<string>('');
   const [showNewBooking, setShowNewBooking] = useState(false);
-  const [showCalendar, setShowCalendar] = useState(false);
-  const [showPrint, setShowPrint] = useState(false);
+  const [showCalendar, setShowCalendar]    = useState(false);
+  const [showPrint, setShowPrint]          = useState(false);
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
 
   useEffect(() => { fetchBookings(); }, [statusFilter, dateFilter]);
@@ -681,10 +604,11 @@ export function BookingsPage() {
     try {
       const params = new URLSearchParams();
       if (statusFilter !== 'all') params.append('status', statusFilter);
-      if (dateFilter) params.append('date', dateFilter);
-      const res = await fetch(`${API_URL}/bookings?${params}`);
+      if (dateFilter)             params.append('date', dateFilter);
+
+      const res  = await fetch(`${API_URL}/bookings?${params}`);
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to fetch');
+      if (!res.ok) throw new Error(data.message || 'Failed to fetch bookings');
       setBookings(data.bookings || []);
     } catch (err: any) {
       setError(err.message);
@@ -693,20 +617,32 @@ export function BookingsPage() {
     }
   };
 
+  // ✅ FIX: Full error details shown, response body parsed before throwing
   const handleStatusChange = async (id: string, status: BookingStatus) => {
+    console.log(`[BookingsPage] PATCH ${API_URL}/bookings/${id} → status: ${status}`);
     try {
-      const res = await fetch(`${API_URL}/bookings/${id}/status`, {
-        method: 'PATCH',
+      const res = await fetch(`${API_URL}/bookings/${id}`, {
+        method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
+        body:    JSON.stringify({ status }),
       });
-      if (!res.ok) throw new Error('Failed to update');
+
+      const data = await res.json();
+      console.log('[BookingsPage] PATCH response:', data);
+
+      if (!res.ok) {
+        throw new Error(data.message || `Server returned ${res.status}`);
+      }
+
+      // ✅ Update local state immediately so UI reflects change without refetch
       setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b));
+
     } catch (err: any) {
-      alert('Failed to update status: ' + err.message);
+      console.error('[BookingsPage] Status update failed:', err);
+      alert(`Failed to update status: ${err.message}`);
+      throw err; // Re-throw so BookingDetailModal can reset its loading state
     }
   };
-  
 
   const filtered = bookings.filter(b =>
     (b.customer?.toLowerCase().includes(search.toLowerCase()) ||
@@ -715,11 +651,11 @@ export function BookingsPage() {
   );
 
   const stats = {
-    total: bookings.length,
-    pending: bookings.filter(b => b.status === 'Pending').length,
+    total:      bookings.length,
+    pending:    bookings.filter(b => b.status === 'Pending').length,
     inProgress: bookings.filter(b => b.status === 'In Progress').length,
-    completed: bookings.filter(b => b.status === 'Completed').length,
-    waiting: bookings.filter(b => b.status === 'Waiting').length,
+    completed:  bookings.filter(b => b.status === 'Completed').length,
+    waiting:    bookings.filter(b => b.status === 'Waiting').length,
   };
 
   return (
@@ -750,11 +686,11 @@ export function BookingsPage() {
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
           {[
-            { label: 'Total', value: stats.total, color: 'text-white' },
-            { label: 'Pending', value: stats.pending, color: 'text-yellow-400' },
+            { label: 'Total',       value: stats.total,      color: 'text-white' },
+            { label: 'Pending',     value: stats.pending,    color: 'text-yellow-400' },
             { label: 'In Progress', value: stats.inProgress, color: 'text-blue-400' },
-            { label: 'Completed', value: stats.completed, color: 'text-green-400' },
-            { label: 'Waiting', value: stats.waiting, color: 'text-orange-400' },
+            { label: 'Completed',   value: stats.completed,  color: 'text-green-400' },
+            { label: 'Waiting',     value: stats.waiting,    color: 'text-orange-400' },
           ].map(s => (
             <div key={s.label} className="bg-neutral-900 border border-neutral-800 rounded-xl p-3 md:p-4">
               <div className={`text-xl md:text-2xl font-bold ${s.color}`}>{s.value}</div>
@@ -770,13 +706,13 @@ export function BookingsPage() {
             <div className="flex flex-col md:flex-row gap-3">
               <div className="relative flex-1 max-w-full md:max-w-sm">
                 <Search className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500" />
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customer, ID, vehicle..."
+                <input value={search} onChange={e => setSearch(e.target.value)}
+                  placeholder="Search customer, ID, vehicle..."
                   className="w-full pl-9 pr-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600 transition-colors" />
               </div>
               <div className="flex gap-2 items-center">
                 <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)}
-                  className="px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors"
-                  placeholder="Filter by date" />
+                  className="px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors" />
                 {dateFilter && (
                   <button onClick={() => setDateFilter('')}
                     className="px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-white text-xs font-medium transition-colors whitespace-nowrap">
@@ -802,17 +738,9 @@ export function BookingsPage() {
             </div>
           </div>
 
-          {/* Error */}
-          {error && <div className="p-4 bg-red-500/10 border-b border-red-500/20 text-red-400 text-sm text-center">{error}</div>}
+          {error    && <div className="p-4 bg-red-500/10 border-b border-red-500/20 text-red-400 text-sm text-center">{error}</div>}
+          {loading  && <div className="flex items-center justify-center py-16"><RefreshCw className="w-8 h-8 text-[#FFD700] animate-spin" /></div>}
 
-          {/* Loading */}
-          {loading && (
-            <div className="flex items-center justify-center py-16">
-              <RefreshCw className="w-8 h-8 text-[#FFD700] animate-spin" />
-            </div>
-          )}
-
-          {/* Empty */}
           {!loading && !error && filtered.length === 0 && (
             <div className="py-16 text-center">
               <div className="text-neutral-500 mb-3">No bookings found</div>
@@ -820,13 +748,12 @@ export function BookingsPage() {
             </div>
           )}
 
-          {/* Table */}
           {!loading && filtered.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-neutral-950 border-b border-neutral-800">
-                    {['Booking ID', 'Date', 'Customer', 'Vehicle', 'Service', 'Status', 'Actions'].map(h => (
+                    {['Booking ID','Date','Customer','Vehicle','Service','Status','Actions'].map(h => (
                       <th key={h} className={`px-3 md:px-5 py-3 md:py-3.5 font-bold text-[#FFD700] text-left text-xs md:text-sm whitespace-nowrap ${h === 'Actions' ? 'text-right' : ''}`}>{h}</th>
                     ))}
                   </tr>
@@ -875,15 +802,17 @@ export function BookingsPage() {
         </div>
       </div>
 
-      {/* Modals */}
-      {showNewBooking && <ManualBookingModal onClose={() => setShowNewBooking(false)} onSuccess={fetchBookings} existingBookings={bookings} />}
-      {showCalendar && <CalendarModal bookings={bookings} onClose={() => setShowCalendar(false)} />}
-      {showPrint && <PrintView bookings={filtered} onClose={() => setShowPrint(false)} />}
+      {showNewBooking  && <ManualBookingModal onClose={() => setShowNewBooking(false)} onSuccess={fetchBookings} existingBookings={bookings} />}
+      {showCalendar    && <CalendarModal bookings={bookings} onClose={() => setShowCalendar(false)} />}
+      {showPrint       && <PrintView bookings={filtered} onClose={() => setShowPrint(false)} />}
       {selectedBooking && (
         <BookingDetailModal
           booking={selectedBooking}
           onClose={() => setSelectedBooking(null)}
-          onStatusChange={async (id, status) => { await handleStatusChange(id, status); setSelectedBooking(null); }}
+          onStatusChange={async (id, status) => {
+            await handleStatusChange(id, status);
+            setSelectedBooking(null);
+          }}
         />
       )}
     </>
