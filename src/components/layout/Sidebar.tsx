@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   LayoutDashboard, Calendar, Users, Package,
+  Briefcase,
   FileBarChart, Settings, LogOut, User, Wrench, Building2,
 } from 'lucide-react';
 
@@ -13,7 +14,7 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
   Admin:          ['dashboard', 'bookings', 'staff', 'inventory', 'reports', 'settings'],
   Manager:        ['dashboard', 'bookings', 'staff', 'inventory', 'reports'],
   'Service Advisor': ['dashboard', 'bookings'],
-  'Super Admin':  ['dashboard', 'bookings', 'staff', 'inventory', 'reports', 'settings', 'user-management', 'corporate-data', 'customers'],
+  'Super Admin':  ['dashboard', 'bookings', 'staff', 'inventory', 'reports', 'settings', 'user-management', 'corporate-data', 'customers', 'jobs'],
 };
 
 export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
@@ -32,6 +33,7 @@ export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
     { id: 'user-management', label: 'User Management',   icon: User },
     { id: 'corporate-data',  label: 'Corporate Data',    icon: Building2 },
     { id: 'customers',       label: 'Customers',         icon: Users },
+    { id: 'jobs',            label: 'Job Management',    icon: Briefcase },
   ];
 
   const handleLogout = () => {

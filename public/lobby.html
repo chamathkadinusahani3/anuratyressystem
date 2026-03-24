@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Anura Tyres — Service Status</title>
+  <style>
+    /* ── Reset & base ────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --yellow:  #FFD700;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --orange:  #f97316;
+      --blue:    #3b82f6;
+      --bg:      #0a0a0a;
+      --card:    #111111;
+      --border:  #1f1f1f;
+      --text:    #ffffff;
+      --muted:   #666666;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────── */
+    .screen {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      padding: 0;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 40px;
+      border-bottom: 1px solid var(--border);
+      background: #0d0d0d;
+      flex-shrink: 0;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .logo-icon {
+      width: 44px; height: 44px;
+      background: rgba(255,215,0,0.1);
+      border: 1px solid rgba(255,215,0,0.2);
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .logo-icon svg { width: 24px; height: 24px; color: var(--yellow); }
+    .brand-name {
+      font-size: 20px;
+      font-weight: 900;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .brand-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+    .branch-badge {
+      font-size: 13px;
+      font-weight: 700;
+      padding: 6px 14px;
+      background: rgba(255,215,0,0.1);
+      border: 1px solid rgba(255,215,0,0.2);
+      border-radius: 999px;
+      color: var(--yellow);
+    }
+    .clock {
+      font-size: 22px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Controls bar ────────────────────────────────────────────── */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 40px;
+      background: #0d0d0d;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .controls label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      white-space: nowrap;
+    }
+    .controls select,
+    .controls input {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      padding: 6px 12px;
+      outline: none;
+    }
+    .controls select:focus,
+    .controls input:focus {
+      border-color: rgba(255,215,0,0.4);
+    }
+    .refresh-btn {
+      margin-left: auto;
+      display: flex; align-items: center; gap: 6px;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .refresh-btn:hover { color: var(--text); border-color: #444; }
+    .refresh-btn svg { width: 14px; height: 14px; }
+    .refresh-btn.spinning svg { animation: spin 1s linear infinite; }
+
+    /* ── Grid ────────────────────────────────────────────────────── */
+    .grid-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px 40px;
+    }
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 20px;
+    }
+
+    /* ── Vehicle card ────────────────────────────────────────────── */
+    .vehicle-card {
+      background: var(--card);
+      border-radius: 20px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      transition: border-color 0.3s;
+    }
+    .vehicle-card.status-in_progress { border-color: rgba(34,197,94,0.3); }
+    .vehicle-card.status-paused      { border-color: rgba(249,115,22,0.3); }
+    .vehicle-card.status-done        { border-color: rgba(255,255,255,0.08); opacity: 0.7; }
+    .vehicle-card.status-overtime    { border-color: rgba(239,68,68,0.4); }
+
+    /* Card header */
+    .card-header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .plate-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+    .plate {
+      font-size: 28px;
+      font-weight: 900;
+      font-family: 'Courier New', monospace;
+      letter-spacing: 0.08em;
+      color: var(--text);
+    }
+    .status-pill {
+      font-size: 11px;
+      font-weight: 800;
+      padding: 5px 12px;
+      border-radius: 999px;
+      border: 1px solid;
+      white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .pill-in_progress { background: rgba(34,197,94,0.15);  border-color: rgba(34,197,94,0.3);  color: #4ade80; }
+    .pill-paused      { background: rgba(249,115,22,0.15); border-color: rgba(249,115,22,0.3); color: #fb923c; }
+    .pill-assigned    { background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.3); color: #60a5fa; }
+    .pill-done        { background: rgba(255,255,255,0.05);border-color: rgba(255,255,255,0.1);color: #6b7280; }
+    .pill-overtime    { background: rgba(239,68,68,0.15);  border-color: rgba(239,68,68,0.3);  color: #f87171; }
+
+    .customer-name {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    /* Countdown */
+    .countdown-area {
+      padding: 20px 24px;
+      text-align: center;
+    }
+    .countdown {
+      font-size: 64px;
+      font-weight: 900;
+      font-family: 'Courier New', monospace;
+      letter-spacing: 0.04em;
+      line-height: 1;
+      transition: color 0.3s;
+    }
+    .countdown.green    { color: var(--green); }
+    .countdown.red      { color: var(--red); }
+    .countdown.orange   { color: var(--orange); }
+    .countdown.grey     { color: var(--muted); }
+    .countdown-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: 6px;
+    }
+
+    /* Services list */
+    .services-area {
+      padding: 0 24px 20px;
+    }
+    .service-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: #1a1a1a;
+      border-radius: 10px;
+      margin-bottom: 8px;
+      border: 1px solid var(--border);
+    }
+    .service-row:last-child { margin-bottom: 0; }
+    .service-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .service-time {
+      font-size: 12px;
+      font-family: 'Courier New', monospace;
+      font-weight: 700;
+    }
+    .service-time.green  { color: var(--green); }
+    .service-time.red    { color: var(--red); }
+    .service-time.orange { color: var(--orange); }
+    .service-time.grey   { color: var(--muted); }
+
+    /* ── DONE banner ─────────────────────────────────────────────── */
+    .done-banner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 28px 24px;
+      text-align: center;
+    }
+    .done-icon {
+      width: 56px; height: 56px;
+      background: rgba(34,197,94,0.15);
+      border: 2px solid rgba(34,197,94,0.3);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .done-icon svg { width: 28px; height: 28px; color: var(--green); }
+    .done-title {
+      font-size: 22px;
+      font-weight: 900;
+      color: var(--green);
+      letter-spacing: -0.01em;
+    }
+    .done-sub {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    /* ── Empty / loading states ─────────────────────────────────── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 60vh;
+      text-align: center;
+      gap: 16px;
+      color: var(--muted);
+    }
+    .empty-state svg { width: 56px; height: 56px; opacity: 0.2; }
+    .empty-title { font-size: 20px; font-weight: 700; }
+    .empty-sub   { font-size: 14px; }
+
+    /* ── Footer ─────────────────────────────────────────────────── */
+    .footer {
+      padding: 10px 40px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #0d0d0d;
+      flex-shrink: 0;
+    }
+    .footer-left  { font-size: 11px; color: var(--muted); }
+    .footer-right { font-size: 11px; color: #333; }
+
+    /* ── Animations ─────────────────────────────────────────────── */
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.6; }
+    }
+    .pulse { animation: pulse-glow 2s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+
+<div class="screen" id="app">
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-name">Anura Tyres</div>
+        <div class="brand-sub">Service Status Display</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <span class="branch-badge" id="branch-badge">Pannipitiya</span>
+      <div class="clock" id="clock">00:00:00</div>
+    </div>
+  </header>
+
+  <!-- Controls -->
+  <div class="controls">
+    <label for="branch-select">Branch</label>
+    <select id="branch-select">
+      <option value="Pannipitiya">Pannipitiya</option>
+      <option value="Ratnapura">Ratnapura</option>
+      <option value="Kalawana">Kalawana</option>
+      <option value="Nivithigala">Nivithigala</option>
+    </select>
+
+    <label for="date-input" style="margin-left:12px">Date</label>
+    <input type="date" id="date-input" />
+
+    <button class="refresh-btn" id="refresh-btn" onclick="fetchLobby()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"></polyline>
+        <polyline points="1 20 1 14 7 14"></polyline>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+      </svg>
+      Refresh
+    </button>
+  </div>
+
+  <!-- Cards grid -->
+  <div class="grid-area">
+    <div class="cards-grid" id="cards-grid">
+      <div class="empty-state" id="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <div class="empty-title">No active jobs</div>
+        <div class="empty-sub">Jobs will appear here once mechanics start working</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <span class="footer-left" id="last-updated">Waiting for data…</span>
+    <span class="footer-right">Auto-refreshes every 10 seconds</span>
+  </footer>
+
+</div>
+
+<script>
+  const API = 'https://anuratyres-backend-emm1774.vercel.app';
+
+  // ── State ────────────────────────────────────────────────────────
+  let lobbyData    = [];   // raw server data
+  let localNow     = 0;   // server fetch timestamp (ms)
+  let fetchedAt    = 0;   // when we last fetched
+  let refreshTimer = null;
+  let tickTimer    = null;
+
+  // ── Init ─────────────────────────────────────────────────────────
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('date-input').value = today;
+
+  // ── Live clock ───────────────────────────────────────────────────
+  function updateClock() {
+    const now = new Date();
+    document.getElementById('clock').textContent =
+      now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  // ── Tick: re-render countdowns every second without re-fetching ──
+  function tick() {
+    if (!lobbyData.length) return;
+    const elapsed = Math.floor((Date.now() - fetchedAt) / 1000);
+    renderCards(elapsed);
+  }
+
+  // ── Fetch from API ───────────────────────────────────────────────
+  async function fetchLobby() {
+    const branch = document.getElementById('branch-select').value;
+    const date   = document.getElementById('date-input').value;
+    const btn    = document.getElementById('refresh-btn');
+
+    document.getElementById('branch-badge').textContent = branch;
+    btn.classList.add('spinning');
+
+    try {
+      const res  = await fetch(`${API}/api/jobs?resource=lobby&branch=${encodeURIComponent(branch)}&date=${date}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Fetch failed');
+
+      lobbyData = Array.isArray(data) ? data : [];
+      fetchedAt = Date.now();
+      document.getElementById('last-updated').textContent =
+        'Last updated: ' + new Date().toLocaleTimeString('en-GB');
+      renderCards(0);
+    } catch (err) {
+      document.getElementById('last-updated').textContent = 'Error: ' + err.message;
+    } finally {
+      btn.classList.remove('spinning');
+    }
+  }
+
+  // ── Format mm:ss ────────────────────────────────────────────────
+  function fmtCountdown(secs) {
+    const abs = Math.abs(secs);
+    const m   = String(Math.floor(abs / 60)).padStart(2, '0');
+    const s   = String(abs % 60).padStart(2, '0');
+    return (secs < 0 ? '-' : '') + m + ':' + s;
+  }
+
+  // ── Render all cards ────────────────────────────────────────────
+  function renderCards(elapsedSecs) {
+    const grid  = document.getElementById('cards-grid');
+    const empty = document.getElementById('empty-state');
+
+    // Filter: show active + done-recently (last 5 min)
+    const visible = lobbyData.filter(v =>
+      v.overallStatus !== 'done' ||
+      v.services.some(s => s.status === 'done')
+    );
+
+    if (visible.length === 0) {
+      empty.style.display = 'flex';
+      // Remove all cards except empty state
+      Array.from(grid.children).forEach(c => {
+        if (c.id !== 'empty-state') c.remove();
+      });
+      return;
+    }
+    empty.style.display = 'none';
+
+    // Build a map of existing card elements by plate
+    const existing = {};
+    Array.from(grid.children).forEach(c => {
+      if (c.dataset.plate) existing[c.dataset.plate] = c;
+    });
+
+    // Create / update cards
+    const plates = new Set();
+    for (const vehicle of visible) {
+      plates.add(vehicle.vehiclePlate);
+      let card = existing[vehicle.vehiclePlate];
+      if (!card) {
+        card = document.createElement('div');
+        card.className = 'vehicle-card';
+        card.dataset.plate = vehicle.vehiclePlate;
+        grid.appendChild(card);
+      }
+      renderCard(card, vehicle, elapsedSecs);
+    }
+
+    // Remove cards for plates no longer in data
+    Object.keys(existing).forEach(p => {
+      if (!plates.has(p)) existing[p].remove();
+    });
+  }
+
+  // ── Render a single card ────────────────────────────────────────
+  function renderCard(card, vehicle, elapsedSecs) {
+    const isDone     = vehicle.overallStatus === 'done';
+    const isPaused   = vehicle.overallStatus === 'paused';
+    const isRunning  = vehicle.overallStatus === 'in_progress';
+
+    // Remaining = server value minus elapsed ticks
+    const remaining  = isDone ? 0 : Math.max(-9999, vehicle.remainingSecs - elapsedSecs);
+    const isOvertime = isRunning && remaining < 0;
+
+    // Status class
+    card.className = 'vehicle-card status-' + (isOvertime ? 'overtime' : vehicle.overallStatus);
+
+    if (isDone) {
+      card.innerHTML = `
+        <div class="card-header">
+          <div class="plate-row">
+            <span class="plate">${vehicle.vehiclePlate}</span>
+            <span class="status-pill pill-done">Done</span>
+          </div>
+          ${vehicle.customerName ? `<div class="customer-name">${vehicle.customerName}</div>` : ''}
+        </div>
+        <div class="done-banner">
+          <div class="done-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </div>
+          <div class="done-title">Job is done!</div>
+          <div class="done-sub">Please come to the sales counter</div>
+        </div>`;
+      return;
+    }
+
+    // Active card
+    const pillClass   = isOvertime ? 'pill-overtime' :
+                        isPaused   ? 'pill-paused' :
+                        isRunning  ? 'pill-in_progress' : 'pill-assigned';
+    const pillLabel   = isOvertime ? 'Overtime' :
+                        isPaused   ? 'Paused' :
+                        isRunning  ? 'In Progress' : 'Assigned';
+
+    const cdClass     = isOvertime ? 'red' : isPaused ? 'orange' : isRunning ? 'green' : 'grey';
+    const cdLabel     = isOvertime ? '⚠ Overtime' : isPaused ? 'Paused' :
+                        isRunning  ? 'Remaining time' : 'Waiting to start';
+    const cdValue     = (isRunning || isPaused) ? fmtCountdown(remaining) :
+                        fmtCountdown(vehicle.remainingSecs);
+
+    const servicesHtml = vehicle.services.map(svc => {
+      const sRemaining  = isDone ? 0 : Math.max(-9999, svc.remainingSecs - elapsedSecs);
+      const sOvertime   = svc.status === 'in_progress' && sRemaining < 0;
+      const sTimeClass  = svc.status === 'done'        ? 'grey' :
+                          sOvertime                     ? 'red'  :
+                          svc.status === 'in_progress'  ? 'green':
+                          svc.status === 'paused'        ? 'orange': 'grey';
+      const sTimeVal    = svc.status === 'done'         ? 'Done' :
+                          (svc.status === 'in_progress' || svc.status === 'paused')
+                            ? fmtCountdown(sRemaining)
+                            : `${svc.allocatedMins}m`;
+      return `
+        <div class="service-row">
+          <span class="service-name">${svc.service}</span>
+          <span class="service-time ${sTimeClass}">${sTimeVal}</span>
+        </div>`;
+    }).join('');
+
+    card.innerHTML = `
+      <div class="card-header">
+        <div class="plate-row">
+          <span class="plate">${vehicle.vehiclePlate}</span>
+          <span class="status-pill ${pillClass}">${pillLabel}</span>
+        </div>
+        ${vehicle.customerName ? `<div class="customer-name">${vehicle.customerName}</div>` : ''}
+      </div>
+      <div class="countdown-area">
+        <div class="countdown ${cdClass} ${isRunning ? 'pulse' : ''}">${cdValue}</div>
+        <div class="countdown-label">${cdLabel}</div>
+      </div>
+      <div class="services-area">${servicesHtml}</div>`;
+  }
+
+  // ── Branch / date change triggers re-fetch ───────────────────────
+  document.getElementById('branch-select').addEventListener('change', fetchLobby);
+  document.getElementById('date-input').addEventListener('change', fetchLobby);
+
+  // ── Auto-refresh every 10 seconds ────────────────────────────────
+  refreshTimer = setInterval(fetchLobby, 10000);
+
+  // ── Tick every second (countdown animation) ──────────────────────
+  tickTimer = setInterval(tick, 1000);
+
+  // ── Initial load ─────────────────────────────────────────────────
+  fetchLobby();
+</script>
+</body>
+</html>

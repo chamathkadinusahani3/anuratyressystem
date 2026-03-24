@@ -1,9 +1,9 @@
-// src/pages/CustomersPage.tsx  (admin dashboard)
-import React, { useState, useEffect, useRef } from 'react';
+// src/pages/CustomersPage.tsx
+import React, { useState, useEffect } from 'react';
 import {
   Users, Search, Download, RefreshCw, AlertCircle, Loader2,
-  ChevronDown, ChevronRight, Car, Calendar, Package, Activity,
-  Mail, Phone, Shield, Clock, X, TrendingUp, Eye,
+  Car, Calendar, Package, Activity, Shield, TrendingUp, X,
+  CheckCircle, Clock, MapPin,
 } from 'lucide-react';
 
 const API_URL = (import.meta.env.VITE_API_URL || 'https://anuratyres-backend-emm1774.vercel.app/api').replace(/\/$/, '');
@@ -73,16 +73,14 @@ const ACTIVITY_LABELS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  upcoming:  'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-  completed: 'bg-green-500/20 text-green-400 border-green-500/30',
-  cancelled: 'bg-red-500/20 text-red-400 border-red-500/30',
-  confirmed: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-  pending:   'bg-gray-500/20 text-gray-400 border-gray-500/30',
-  delivered: 'bg-green-500/20 text-green-400 border-green-500/30',
-  Waiting:   'bg-orange-500/20 text-orange-400 border-orange-500/30',
+  upcoming:  'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+  completed: 'bg-green-500/20 text-green-400 border border-green-500/30',
+  cancelled: 'bg-red-500/20 text-red-400 border border-red-500/30',
+  confirmed: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
+  pending:   'bg-neutral-700 text-neutral-400 border border-neutral-600',
+  delivered: 'bg-green-500/20 text-green-400 border border-green-500/30',
 };
 
-// ─── CSV export ───────────────────────────────────────────────────────────────
 function downloadCSV(filename: string, rows: string[][]): void {
   const csv  = rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -92,111 +90,126 @@ function downloadCSV(filename: string, rows: string[][]): void {
   URL.revokeObjectURL(url);
 }
 function exportCustomersCSV(customers: Customer[]): void {
-  const header = ['Name','Email','Phone','Provider','Registered','Last Login','Vehicles','Bookings','Orders','Revenue (Rs.)','Last Activity'];
+  const header = ['Name','Email','Phone','Provider','Registered','Last Login','Vehicles','Bookings','Orders','Revenue (Rs.)'];
   const rows   = customers.map(c => [
     c.name, c.email, c.phone || '—', c.provider,
     fmtDate(c.createdAt), fmtDate(c.lastLogin),
     String(c.stats.vehicleCount), String(c.stats.bookingCount),
     String(c.stats.orderCount), String(c.stats.totalRevenue),
-    c.stats.lastActivity ? fmtDateTime(c.stats.lastActivity) : '—',
   ]);
   downloadCSV(`anura_customers_${new Date().toISOString().split('T')[0]}.csv`, [header, ...rows]);
 }
 
-// ─── Customer Detail Drawer ───────────────────────────────────────────────────
+function Empty({ icon: Icon, label, sub }: { icon: any; label: string; sub?: string }) {
+  return (
+    <div className="py-16 text-center">
+      <div className="w-14 h-14 rounded-2xl bg-neutral-800 border border-neutral-700 flex items-center justify-center mx-auto mb-4">
+        <Icon className="w-6 h-6 text-neutral-600" />
+      </div>
+      <p className="text-neutral-400 font-semibold text-sm">{label}</p>
+      {sub && <p className="text-neutral-600 text-xs mt-1.5 max-w-xs mx-auto">{sub}</p>}
+    </div>
+  );
+}
+
+// ─── Avatar ───────────────────────────────────────────────────────────────────
+function Avatar({ customer, size = 'md' }: { customer: Customer; size?: 'sm' | 'md' | 'lg' }) {
+  const sz = size === 'sm' ? 'w-8 h-8 text-xs' : size === 'lg' ? 'w-16 h-16 text-2xl' : 'w-10 h-10 text-sm';
+  if (customer.photoURL) {
+    return <img src={customer.photoURL} className={`${sz} rounded-full object-cover ring-2 ring-[#FFD700]/20`} alt="" />;
+  }
+  return (
+    <div className={`${sz} rounded-full bg-gradient-to-br from-[#FFD700]/20 to-[#FFD700]/5 border border-[#FFD700]/20 flex items-center justify-center text-[#FFD700] font-black flex-shrink-0`}>
+      {(customer.name || customer.email)[0].toUpperCase()}
+    </div>
+  );
+}
+
+// ─── Customer Drawer ──────────────────────────────────────────────────────────
 function CustomerDrawer({ customer, onClose }: { customer: Customer; onClose: () => void }) {
   const [tab, setTab] = useState<'vehicles'|'appointments'|'orders'|'activity'>('vehicles');
-
-  const expirySoon = customer.vehicles.some(v => {
-    const ins = daysUntil(v.insuranceExpiry);
-    const rev = daysUntil(v.revenueExpiry);
-    return ins < 30 || rev < 30;
-  });
+  const expirySoon = customer.vehicles.some(v => daysUntil(v.insuranceExpiry) < 30 || daysUntil(v.revenueExpiry) < 30);
 
   return (
     <div className="fixed inset-0 z-50 flex">
-      {/* Backdrop */}
-      <div className="flex-1 bg-black/60" onClick={onClose} />
-
-      {/* Drawer */}
-      <div className="w-full max-w-2xl bg-neutral-900 border-l border-neutral-700 flex flex-col h-full overflow-hidden shadow-2xl">
+      <div className="flex-1 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="w-full max-w-xl bg-neutral-950 border-l border-neutral-800 flex flex-col h-full shadow-2xl">
 
         {/* Header */}
-        <div className="p-5 border-b border-neutral-800 flex items-start justify-between gap-4">
-          <div className="flex items-center gap-4">
-            {customer.photoURL
-              ? <img src={customer.photoURL} className="w-14 h-14 rounded-full object-cover ring-2 ring-[#FFD700]/30" alt="" />
-              : <div className="w-14 h-14 rounded-full bg-[#FFD700]/20 flex items-center justify-center text-[#FFD700] font-bold text-xl">
-                  {(customer.name || customer.email)[0].toUpperCase()}
+        <div className="p-6 border-b border-neutral-800/80 bg-neutral-900/50">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <Avatar customer={customer} size="lg" />
+              <div>
+                <h2 className="text-lg font-bold text-white">{customer.name || '(no name)'}</h2>
+                <p className="text-neutral-400 text-sm mt-0.5">{customer.email}</p>
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-neutral-800 border border-neutral-700 text-neutral-400 uppercase tracking-wider">
+                    {customer.provider === 'google.com' ? '🔵 Google' : '📧 Email'}
+                  </span>
+                  {customer.emailVerified && (
+                    <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-green-500/10 border border-green-500/20 text-green-400 uppercase tracking-wider">✓ Verified</span>
+                  )}
+                  {expirySoon && (
+                    <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 uppercase tracking-wider">⚠ Expiry</span>
+                  )}
                 </div>
-            }
-            <div>
-              <h2 className="text-lg font-bold text-white">{customer.name || '(no name)'}</h2>
-              <p className="text-neutral-400 text-sm">{customer.email}</p>
-              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-800 border border-neutral-700 text-neutral-400">
-                  {customer.provider === 'google.com' ? '🔵 Google' : '📧 Email'}
-                </span>
-                {customer.emailVerified && (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/20 border border-green-500/30 text-green-400">✓ Verified</span>
-                )}
-                {expirySoon && (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 border border-yellow-500/30 text-yellow-400">⚠ Expiry soon</span>
-                )}
               </div>
             </div>
+            <button onClick={onClose} className="text-neutral-600 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-neutral-800">
+              <X className="w-5 h-5" />
+            </button>
           </div>
-          <button onClick={onClose} className="text-neutral-500 hover:text-white p-1">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
 
-        {/* Quick stats */}
-        <div className="grid grid-cols-4 border-b border-neutral-800">
-          {[
-            { label: 'Vehicles',   value: customer.stats.vehicleCount },
-            { label: 'Bookings',   value: customer.stats.bookingCount },
-            { label: 'Orders',     value: customer.stats.orderCount },
-            { label: 'Revenue',    value: `Rs.${customer.stats.totalRevenue.toLocaleString()}` },
-          ].map(s => (
-            <div key={s.label} className="p-3 text-center border-r border-neutral-800 last:border-0">
-              <div className="text-lg font-bold text-[#FFD700]">{s.value}</div>
-              <div className="text-xs text-neutral-500">{s.label}</div>
-            </div>
-          ))}
-        </div>
+          {/* Stats row */}
+          <div className="grid grid-cols-4 gap-3 mt-5">
+            {[
+              { label: 'Vehicles',   value: customer.stats.vehicleCount,  color: 'text-white' },
+              { label: 'Bookings',   value: customer.stats.bookingCount,   color: 'text-[#FFD700]' },
+              { label: 'Orders',     value: customer.stats.orderCount,     color: 'text-white' },
+              { label: 'Revenue',    value: `Rs.${(customer.stats.totalRevenue||0).toLocaleString()}`, color: 'text-green-400' },
+            ].map(s => (
+              <div key={s.label} className="bg-neutral-800/60 rounded-xl p-3 text-center border border-neutral-700/50">
+                <div className={`text-base font-black ${s.color}`}>{s.value}</div>
+                <div className="text-[10px] text-neutral-500 mt-0.5 uppercase tracking-wider">{s.label}</div>
+              </div>
+            ))}
+          </div>
 
-        {/* Meta */}
-        <div className="px-5 py-3 border-b border-neutral-800 grid grid-cols-2 gap-2 text-xs text-neutral-500">
-          <span>📅 Joined: <span className="text-neutral-300">{fmtDate(customer.createdAt)}</span></span>
-          <span>🔐 Last login: <span className="text-neutral-300">{timeAgo(customer.lastLogin)}</span></span>
-          {customer.phone && <span>📞 <span className="text-neutral-300">{customer.phone}</span></span>}
-          {customer.stats.lastActivity && <span>👁 Last activity: <span className="text-neutral-300">{timeAgo(customer.stats.lastActivity as string)}</span></span>}
+          {/* Meta */}
+          <div className="flex gap-4 mt-4 text-xs text-neutral-500">
+            <span>📅 Joined {fmtDate(customer.createdAt)}</span>
+            <span>🔐 {timeAgo(customer.lastLogin)}</span>
+            {customer.phone && <span>📞 {customer.phone}</span>}
+          </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-neutral-800 px-3">
+        <div className="flex border-b border-neutral-800 bg-neutral-900/30">
           {([
-            { id: 'vehicles',     label: 'Vehicles',     icon: Car,      count: customer.stats.vehicleCount },
-            { id: 'appointments', label: 'Appointments', icon: Calendar, count: customer.stats.appointmentCount },
-            { id: 'orders',       label: 'Orders',        icon: Package, count: customer.stats.orderCount },
-            { id: 'activity',     label: 'Activity',      icon: Activity, count: customer.activity.length },
+            { id: 'vehicles',     label: 'Vehicles',     count: customer.stats.vehicleCount },
+            { id: 'appointments', label: 'Appts',         count: customer.stats.appointmentCount },
+            { id: 'orders',       label: 'Orders',        count: customer.stats.orderCount },
+            { id: 'activity',     label: 'Activity',      count: customer.activity.length },
           ] as const).map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 px-3 py-3 text-xs font-medium border-b-2 transition-colors ${
-                tab === t.id ? 'border-[#FFD700] text-white' : 'border-transparent text-neutral-500 hover:text-white'
+              className={`flex-1 flex items-center justify-center gap-1.5 py-3.5 text-xs font-bold border-b-2 transition-all ${
+                tab === t.id
+                  ? 'border-[#FFD700] text-[#FFD700]'
+                  : 'border-transparent text-neutral-500 hover:text-neutral-300'
               }`}>
-              <t.icon className="w-3.5 h-3.5" />
               {t.label}
-              {t.count > 0 && <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-neutral-800 text-[10px]">{t.count}</span>}
+              {t.count > 0 && (
+                <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black ${
+                  tab === t.id ? 'bg-[#FFD700]/20 text-[#FFD700]' : 'bg-neutral-800 text-neutral-500'
+                }`}>{t.count}</span>
+              )}
             </button>
           ))}
         </div>
 
-        {/* Tab content */}
+        {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-
-          {/* Vehicles */}
           {tab === 'vehicles' && (
             customer.vehicles.length === 0
               ? <Empty icon={Car} label="No vehicles added" />
@@ -204,23 +217,36 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer; onClose: ()
                   const insD = daysUntil(v.insuranceExpiry);
                   const revD = daysUntil(v.revenueExpiry);
                   return (
-                    <div key={v.id} className="bg-neutral-800 rounded-xl p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <div>
-                          <span className="font-bold text-white text-sm">{v.plate}</span>
-                          <span className="text-neutral-400 text-sm ml-2">{v.year} {v.make} {v.model}</span>
+                    <div key={v.id} className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 hover:border-neutral-700 transition-colors">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-[#FFD700]/10 border border-[#FFD700]/20 flex items-center justify-center">
+                            <Car className="w-4 h-4 text-[#FFD700]" />
+                          </div>
+                          <div>
+                            <p className="text-white font-bold text-sm">{v.plate}</p>
+                            <p className="text-neutral-500 text-xs">{v.year} {v.make} {v.model}</p>
+                          </div>
                         </div>
-                        {v.tyreSize && <span className="text-xs font-mono bg-neutral-700 px-2 py-0.5 rounded text-neutral-300">{v.tyreSize}</span>}
+                        {v.tyreSize && <span className="text-[10px] font-mono bg-neutral-800 border border-neutral-700 px-2 py-1 rounded-lg text-neutral-400">{v.tyreSize}</span>}
                       </div>
-                      <div className="flex flex-wrap gap-2 mt-2">
+                      <div className="flex gap-2 flex-wrap">
                         {v.insuranceExpiry && (
-                          <span className={`text-xs px-2 py-1 rounded-lg border ${insD < 0 ? 'text-red-400 bg-red-500/10 border-red-500/20' : insD < 30 ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' : 'text-green-400 bg-green-500/10 border-green-500/20'}`}>
-                            🛡 Insurance: {insD < 0 ? `Expired ${Math.abs(insD)}d ago` : insD < 30 ? `${insD}d left` : fmtDate(v.insuranceExpiry)}
+                          <span className={`text-[10px] px-2.5 py-1 rounded-lg border font-medium ${
+                            insD < 0 ? 'text-red-400 bg-red-500/10 border-red-500/20' :
+                            insD < 30 ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' :
+                            'text-green-400 bg-green-500/10 border-green-500/20'
+                          }`}>
+                            🛡 {insD < 0 ? `Expired ${Math.abs(insD)}d ago` : insD < 30 ? `${insD}d left` : fmtDate(v.insuranceExpiry)}
                           </span>
                         )}
                         {v.revenueExpiry && (
-                          <span className={`text-xs px-2 py-1 rounded-lg border ${revD < 0 ? 'text-red-400 bg-red-500/10 border-red-500/20' : revD < 30 ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' : 'text-green-400 bg-green-500/10 border-green-500/20'}`}>
-                            📄 Revenue: {revD < 0 ? `Expired ${Math.abs(revD)}d ago` : revD < 30 ? `${revD}d left` : fmtDate(v.revenueExpiry)}
+                          <span className={`text-[10px] px-2.5 py-1 rounded-lg border font-medium ${
+                            revD < 0 ? 'text-red-400 bg-red-500/10 border-red-500/20' :
+                            revD < 30 ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' :
+                            'text-green-400 bg-green-500/10 border-green-500/20'
+                          }`}>
+                            📄 {revD < 0 ? `Expired ${Math.abs(revD)}d ago` : revD < 30 ? `${revD}d left` : fmtDate(v.revenueExpiry)}
                           </span>
                         )}
                       </div>
@@ -229,50 +255,50 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer; onClose: ()
                 })
           )}
 
-          {/* Appointments */}
           {tab === 'appointments' && (
             customer.appointments.length === 0
               ? <Empty icon={Calendar} label="No appointments yet" />
               : customer.appointments.map(a => (
-                  <div key={a.id} className="bg-neutral-800 rounded-xl p-4">
+                  <div key={a.id} className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 hover:border-neutral-700 transition-colors">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-white font-medium text-sm">{a.branch}</span>
-                          <span className={`text-xs px-2 py-0.5 rounded-full border ${STATUS_COLORS[a.status] || STATUS_COLORS.pending}`}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <p className="text-white font-semibold text-sm">{a.branch}</p>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${STATUS_COLORS[a.status] || STATUS_COLORS.pending}`}>
                             {a.status}
                           </span>
                         </div>
-                        <p className="text-neutral-400 text-xs">{fmtDate(a.date)} at {a.time}</p>
-                        <p className="text-neutral-500 text-xs mt-1">{a.services?.join(', ')}</p>
+                        <p className="text-neutral-500 text-xs flex items-center gap-1.5">
+                          <Clock className="w-3 h-3" /> {fmtDate(a.date)} {a.time && `at ${a.time}`}
+                        </p>
+                        {a.services?.length > 0 && (
+                          <p className="text-neutral-600 text-xs mt-1">{a.services.join(', ')}</p>
+                        )}
                       </div>
-                      <span className="text-xs font-mono text-neutral-600">#{a.bookingId}</span>
+                      <span className="text-[10px] font-mono text-neutral-600 bg-neutral-800 px-2 py-1 rounded-lg">#{a.bookingId}</span>
                     </div>
                   </div>
                 ))
           )}
 
-          {/* Orders */}
           {tab === 'orders' && (
             customer.orders.length === 0
               ? <Empty icon={Package} label="No orders yet" />
               : customer.orders.map(o => (
-                  <div key={o.id} className="bg-neutral-800 rounded-xl p-4">
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-white text-sm font-mono">#{o.id.toUpperCase().substring(0, 8)}</span>
-                          <span className={`text-xs px-2 py-0.5 rounded-full border ${STATUS_COLORS[o.status] || STATUS_COLORS.pending}`}>
-                            {o.status}
-                          </span>
-                        </div>
-                        <p className="text-neutral-500 text-xs mt-0.5">{fmtDate(o.date)} · {o.fulfilment}</p>
+                  <div key={o.id} className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 hover:border-neutral-700 transition-colors">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-white text-sm font-mono">#{o.id.substring(0, 8).toUpperCase()}</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${STATUS_COLORS[o.status] || STATUS_COLORS.pending}`}>
+                          {o.status}
+                        </span>
                       </div>
-                      <span className="text-[#FFD700] font-bold text-sm">Rs. {o.total?.toLocaleString()}</span>
+                      <span className="text-[#FFD700] font-black text-sm">Rs. {(o.total||0).toLocaleString()}</span>
                     </div>
+                    <p className="text-neutral-600 text-xs">{fmtDate(o.date)} · {o.fulfilment}</p>
                     {o.items?.map((item, i) => (
-                      <div key={i} className="flex justify-between text-xs text-neutral-400 py-0.5">
-                        <span>{item.name} <span className="font-mono text-[#FFD700]/70">{item.size}</span> ×{item.qty}</span>
+                      <div key={i} className="flex justify-between text-xs text-neutral-500 mt-1.5">
+                        <span>{item.name} <span className="text-[#FFD700]/50 font-mono">{item.size}</span> ×{item.qty}</span>
                         <span>Rs. {(item.price * item.qty).toLocaleString()}</span>
                       </div>
                     ))}
@@ -280,24 +306,22 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer; onClose: ()
                 ))
           )}
 
-          {/* Activity */}
           {tab === 'activity' && (
             customer.activity.length === 0
-              ? <Empty icon={Activity} label="No activity recorded yet" sub="Activity tracking will appear here once the customer browses the website while logged in" />
+              ? <Empty icon={Activity} label="No activity yet" sub="Activity appears when customer browses while logged in" />
               : customer.activity.map(a => (
-                  <div key={a.id} className="flex items-start gap-3 py-2 border-b border-neutral-800 last:border-0">
-                    <div className="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center flex-shrink-0 text-sm">
+                  <div key={a.id} className="flex items-start gap-3 py-3 border-b border-neutral-800/60 last:border-0">
+                    <div className="w-8 h-8 rounded-xl bg-neutral-800 border border-neutral-700 flex items-center justify-center flex-shrink-0 text-sm">
                       {ACTIVITY_LABELS[a.type]?.split(' ')[0] || '📌'}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white">
+                      <p className="text-sm text-white font-medium">
                         {ACTIVITY_LABELS[a.type]?.split(' ').slice(1).join(' ') || a.type}
-                        {a.item && <span className="text-[#FFD700] ml-1 font-medium">"{a.item}"</span>}
+                        {a.item && <span className="text-[#FFD700] ml-1">"{a.item}"</span>}
                       </p>
-                      {a.page && <p className="text-xs text-neutral-500">{a.page}</p>}
-                      {a.branch && <p className="text-xs text-neutral-500">Branch: {a.branch}</p>}
+                      {a.page && <p className="text-xs text-neutral-600 mt-0.5">{a.page}</p>}
                     </div>
-                    <span className="text-xs text-neutral-600 flex-shrink-0">
+                    <span className="text-[10px] text-neutral-600 flex-shrink-0 font-mono">
                       {a.timestamp?.toDate ? timeAgo(a.timestamp.toDate().toISOString()) : '—'}
                     </span>
                   </div>
@@ -309,32 +333,21 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer; onClose: ()
   );
 }
 
-function Empty({ icon: Icon, label, sub }: { icon: any; label: string; sub?: string }) {
-  return (
-    <div className="py-12 text-center">
-      <Icon className="w-10 h-10 text-neutral-700 mx-auto mb-3" />
-      <p className="text-neutral-500 text-sm font-medium">{label}</p>
-      {sub && <p className="text-neutral-600 text-xs mt-1 max-w-xs mx-auto">{sub}</p>}
-    </div>
-  );
-}
-
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export function CustomersPage() {
-  const [loading, setLoading]       = useState(true);
-  const [customers, setCustomers]   = useState<Customer[]>([]);
-  const [error, setError]           = useState('');
-  const [search, setSearch]         = useState('');
-  const [filter, setFilter]         = useState<'all'|'active'|'google'|'email'>('all');
-  const [sortBy, setSortBy]         = useState<'newest'|'lastLogin'|'bookings'|'revenue'>('newest');
-  const [selected, setSelected]     = useState<Customer | null>(null);
-  const [exporting, setExporting]   = useState(false);
+  const [loading, setLoading]     = useState(true);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [error, setError]         = useState('');
+  const [search, setSearch]       = useState('');
+  const [filter, setFilter]       = useState<'all'|'active'|'google'|'email'>('all');
+  const [sortBy, setSortBy]       = useState<'newest'|'lastLogin'|'bookings'|'revenue'>('newest');
+  const [selected, setSelected]   = useState<Customer | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => { loadCustomers(); }, []);
 
   const loadCustomers = async () => {
-    setLoading(true);
-    setError('');
+    setLoading(true); setError('');
     try {
       const res  = await fetch(`${API_URL}/customers`);
       const data = await res.json();
@@ -342,25 +355,17 @@ export function CustomersPage() {
       setCustomers(data.customers);
     } catch (err: any) {
       setError(err.message || 'Failed to load customers');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleExport = async () => {
-    setExporting(true);
-    try { exportCustomersCSV(filtered); }
-    finally { setExporting(false); }
+    } finally { setLoading(false); }
   };
 
   const filtered = customers
     .filter(c => {
       const q = search.toLowerCase();
       const matchesSearch = !q ||
-        c.name.toLowerCase().includes(q) ||
-        c.email.toLowerCase().includes(q) ||
+        c.name?.toLowerCase().includes(q) ||
+        c.email?.toLowerCase().includes(q) ||
         c.phone?.toLowerCase().includes(q) ||
-        c.vehicles.some(v => v.plate?.toLowerCase().includes(q));
+        c.vehicles?.some(v => v.plate?.toLowerCase().includes(q));
       const matchesFilter =
         filter === 'all'    ? true :
         filter === 'active' ? !c.disabled :
@@ -376,40 +381,12 @@ export function CustomersPage() {
       return 0;
     });
 
-  // Aggregate stats
-  const totalRevenue    = customers.reduce((s, c) => s + c.stats.totalRevenue, 0);
-  const totalBookings   = customers.reduce((s, c) => s + c.stats.bookingCount, 0);
-  const activeThisWeek  = customers.filter(c => {
-    const diff = Date.now() - new Date(c.lastLogin).getTime();
-    return diff < 7 * 86400000;
-  }).length;
+  const totalRevenue   = customers.reduce((s, c) => s + (c.stats.totalRevenue || 0), 0);
+  const totalBookings  = customers.reduce((s, c) => s + c.stats.bookingCount, 0);
+  const newThisWeek    = customers.filter(c => Date.now() - new Date(c.createdAt).getTime() < 7*86400000).length;
   const expirySoonCount = customers.reduce((s, c) =>
-    s + c.vehicles.filter(v => daysUntil(v.insuranceExpiry) < 30 || daysUntil(v.revenueExpiry) < 30).length, 0
+    s + (c.vehicles || []).filter(v => daysUntil(v.insuranceExpiry) < 30 || daysUntil(v.revenueExpiry) < 30).length, 0
   );
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <Loader2 className="w-12 h-12 text-[#FFD700] animate-spin mx-auto mb-4" />
-          <p className="text-neutral-400">Loading customer data…</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center max-w-md">
-          <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-white mb-2">Error Loading Customers</h2>
-          <p className="text-neutral-400 mb-6">{error}</p>
-          <button onClick={loadCustomers} className="px-6 py-2 bg-[#FFD700] text-black font-bold rounded-lg">Try Again</button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -418,15 +395,16 @@ export function CustomersPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-3xl font-bold text-white mb-1">Customers</h2>
-          <p className="text-neutral-400 text-sm">All registered website customers and their activity</p>
+          <p className="text-neutral-500 text-sm">All registered website customers and their service history.</p>
         </div>
         <div className="flex gap-2">
           <button onClick={loadCustomers}
-            className="flex items-center gap-2 px-4 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-white hover:bg-neutral-700 transition-colors">
-            <RefreshCw className="w-4 h-4" /> Refresh
+            className="flex items-center gap-2 px-4 py-2.5 bg-neutral-900 border border-neutral-700 rounded-xl text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </button>
-          <button onClick={handleExport} disabled={exporting}
-            className="flex items-center gap-2 px-4 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-white hover:bg-neutral-700 transition-colors disabled:opacity-50">
+          <button onClick={() => { setExporting(true); exportCustomersCSV(filtered); setTimeout(() => setExporting(false), 500); }}
+            disabled={exporting || filtered.length === 0}
+            className="flex items-center gap-2 px-4 py-2.5 bg-neutral-900 border border-neutral-700 rounded-xl text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors disabled:opacity-50">
             {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
             Export CSV
           </button>
@@ -436,149 +414,143 @@ export function CustomersPage() {
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { icon: <Users className="w-4 h-4 text-[#FFD700]" />,      label: 'Total Customers',  value: customers.length,                        sub: `${activeThisWeek} active this week` },
-          { icon: <TrendingUp className="w-4 h-4 text-[#FFD700]" />,  label: 'Total Bookings',   value: totalBookings,                           sub: 'all time' },
-          { icon: <Activity className="w-4 h-4 text-[#FFD700]" />,    label: 'Total Revenue',    value: `Rs. ${totalRevenue.toLocaleString()}`,   sub: 'from orders' },
-          { icon: <Shield className="w-4 h-4 text-yellow-400" />,     label: 'Expiry Alerts',    value: expirySoonCount,                         sub: 'vehicles expiring soon', gold: expirySoonCount > 0 },
-        ].map((card: any) => (
-          <div key={card.label} className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-2">{card.icon}<span className="text-xs text-neutral-500">{card.label}</span></div>
-            <div className={`text-2xl font-bold ${card.gold ? 'text-yellow-400' : 'text-white'}`}>{card.value}</div>
-            <div className="text-xs text-neutral-500 mt-1">{card.sub}</div>
+          { icon: Users,      label: 'Total Customers', value: customers.length,                      color: 'text-white',     bg: 'bg-white/5' },
+          { icon: Calendar,   label: 'Total Bookings',  value: totalBookings,                         color: 'text-[#FFD700]', bg: 'bg-[#FFD700]/5' },
+          { icon: TrendingUp, label: 'Total Revenue',   value: `Rs. ${totalRevenue.toLocaleString()}`, color: 'text-green-400', bg: 'bg-green-500/5' },
+          { icon: Shield,     label: 'Expiry Alerts',   value: expirySoonCount,                        color: expirySoonCount > 0 ? 'text-yellow-400' : 'text-neutral-500', bg: expirySoonCount > 0 ? 'bg-yellow-500/5' : 'bg-neutral-800/50' },
+        ].map(s => (
+          <div key={s.label} className={`${s.bg} border border-neutral-800 rounded-2xl p-5`}>
+            <s.icon className={`w-5 h-5 ${s.color} mb-3 opacity-70`} />
+            <div className={`text-2xl font-black ${s.color}`}>{s.value}</div>
+            <div className="text-neutral-500 text-xs mt-1 font-medium">{s.label}</div>
           </div>
         ))}
       </div>
 
-      {/* Search + Filter + Sort */}
-      <div className="flex flex-col md:flex-row gap-3">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
-          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search by name, email, phone, or plate number…"
-            className="w-full pl-10 pr-4 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white placeholder:text-neutral-600 focus:outline-none focus:border-[#FFD700]" />
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          {(['all','active','google','email'] as const).map(f => (
-            <button key={f} onClick={() => setFilter(f)}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors capitalize ${filter === f ? 'bg-[#FFD700] text-black' : 'bg-neutral-800 text-neutral-400 hover:text-white'}`}>
-              {f === 'google' ? '🔵 Google' : f === 'email' ? '📧 Email' : f.charAt(0).toUpperCase() + f.slice(1)}
-            </button>
-          ))}
-          <select value={sortBy} onChange={e => setSortBy(e.target.value as any)}
-            className="px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 text-sm focus:outline-none focus:border-[#FFD700]">
-            <option value="newest">Newest first</option>
-            <option value="lastLogin">Last login</option>
-            <option value="bookings">Most bookings</option>
-            <option value="revenue">Most revenue</option>
-          </select>
+      {/* Filters */}
+      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4">
+        <div className="flex flex-col md:flex-row gap-3">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500" />
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search name, email, phone, plate..."
+              className="w-full pl-9 pr-3 py-2 bg-neutral-800 border border-neutral-700 rounded-xl text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600 transition-colors" />
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {(['all','active','google','email'] as const).map(f => (
+              <button key={f} onClick={() => setFilter(f)}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors capitalize ${
+                  filter === f ? 'bg-[#FFD700] text-black' : 'bg-neutral-800 text-neutral-400 hover:text-white border border-neutral-700'
+                }`}>
+                {f === 'google' ? '🔵 Google' : f === 'email' ? '📧 Email' : f.charAt(0).toUpperCase() + f.slice(1)}
+              </button>
+            ))}
+            <select value={sortBy} onChange={e => setSortBy(e.target.value as any)}
+              className="px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-xl text-neutral-400 text-xs font-bold focus:outline-none focus:border-[#FFD700] transition-colors">
+              <option value="newest">Newest first</option>
+              <option value="lastLogin">Last login</option>
+              <option value="bookings">Most bookings</option>
+              <option value="revenue">Most revenue</option>
+            </select>
+          </div>
         </div>
       </div>
 
       {/* Table */}
-      <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
-        <div className="p-4 border-b border-neutral-800 flex items-center justify-between">
-          <h3 className="font-bold text-white">Registered Customers ({filtered.length})</h3>
-          {search && <span className="text-xs text-neutral-500">Filtered from {customers.length} total</span>}
+      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-neutral-800 flex items-center justify-between">
+          <span className="text-sm font-bold text-white">
+            {filtered.length} customer{filtered.length !== 1 ? 's' : ''}
+            {search && <span className="text-neutral-500 font-normal ml-1">matching "{search}"</span>}
+          </span>
+          {newThisWeek > 0 && (
+            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-green-500/10 border border-green-500/20 text-green-400">
+              +{newThisWeek} new this week
+            </span>
+          )}
         </div>
 
-        {filtered.length === 0 ? (
-          <div className="p-16 text-center">
-            <Users className="w-12 h-12 text-neutral-700 mx-auto mb-3" />
-            <p className="text-neutral-500">{customers.length === 0 ? 'No customers registered yet' : 'No customers match your search'}</p>
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <RefreshCw className="w-6 h-6 text-[#FFD700] animate-spin" />
           </div>
+        ) : error ? (
+          <div className="p-6 text-center">
+            <AlertCircle className="w-10 h-10 text-red-400 mx-auto mb-3" />
+            <p className="text-red-400 font-semibold text-sm">{error}</p>
+            <button onClick={loadCustomers} className="mt-4 text-[#FFD700] text-xs hover:underline">Try again</button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <Empty icon={Users} label={customers.length === 0 ? 'No customers registered yet' : 'No customers match your search'} />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-neutral-800/60 border-b border-neutral-700">
-                  <th className="px-4 py-3 text-left font-medium text-neutral-400">Customer</th>
-                  <th className="px-4 py-3 text-left font-medium text-neutral-400">Vehicles</th>
-                  <th className="px-4 py-3 text-left font-medium text-neutral-400">Bookings</th>
-                  <th className="px-4 py-3 text-left font-medium text-neutral-400">Orders</th>
-                  <th className="px-4 py-3 text-left font-medium text-neutral-400">Revenue</th>
-                  <th className="px-4 py-3 text-left font-medium text-neutral-400">Last Login</th>
-                  <th className="px-4 py-3 text-left font-medium text-neutral-400">Joined</th>
-                  <th className="px-4 py-3 text-left font-medium text-neutral-400"></th>
+                <tr className="bg-neutral-950 border-b border-neutral-800">
+                  {['Customer', 'Contact', 'Vehicles', 'Bookings', 'Revenue', 'Last Login', 'Joined'].map(h => (
+                    <th key={h} className="px-5 py-3.5 text-left text-xs font-bold text-[#FFD700] uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-neutral-800">
-                {filtered.map(customer => {
-                  const hasExpiry = customer.vehicles.some(v =>
+              <tbody className="divide-y divide-neutral-800/60">
+                {filtered.map(c => {
+                  const hasExpiry = (c.vehicles||[]).some(v =>
                     daysUntil(v.insuranceExpiry) < 30 || daysUntil(v.revenueExpiry) < 30
                   );
                   return (
-                    <tr key={customer.uid} className="hover:bg-neutral-800/40 transition-colors cursor-pointer"
-                      onClick={() => setSelected(customer)}>
+                    <tr key={c.uid}
+                      className="hover:bg-neutral-800/40 transition-colors cursor-pointer group"
+                      onClick={() => setSelected(c)}>
 
                       {/* Customer */}
-                      <td className="px-4 py-3">
+                      <td className="px-5 py-4">
                         <div className="flex items-center gap-3">
-                          {customer.photoURL
-                            ? <img src={customer.photoURL} className="w-8 h-8 rounded-full object-cover" alt="" />
-                            : <div className="w-8 h-8 rounded-full bg-[#FFD700]/20 flex items-center justify-center text-[#FFD700] text-xs font-bold flex-shrink-0">
-                                {(customer.name || customer.email)[0].toUpperCase()}
-                              </div>
-                          }
+                          <Avatar customer={c} size="sm" />
                           <div className="min-w-0">
-                            <div className="font-medium text-white truncate max-w-[160px]">
-                              {customer.name || '(no name)'}
-                              {hasExpiry && <span className="ml-1 text-yellow-400" title="Expiry soon">⚠</span>}
+                            <div className="text-white font-semibold text-sm truncate max-w-[140px] flex items-center gap-1.5">
+                              {c.name || '(no name)'}
+                              {hasExpiry && <span className="text-yellow-400 text-xs">⚠</span>}
                             </div>
-                            <div className="text-xs text-neutral-500 truncate max-w-[160px]">{customer.email}</div>
-                            {customer.phone && <div className="text-xs text-neutral-600">{customer.phone}</div>}
+                            <div className="text-neutral-600 text-xs truncate max-w-[140px]">
+                              {c.provider === 'google.com' ? '🔵' : '📧'} {c.emailVerified ? '✓' : ''}
+                            </div>
                           </div>
                         </div>
                       </td>
 
+                      {/* Contact */}
+                      <td className="px-5 py-4">
+                        <div className="text-neutral-400 text-xs truncate max-w-[160px]">{c.email}</div>
+                        {c.phone && <div className="text-neutral-600 text-xs mt-0.5">{c.phone}</div>}
+                      </td>
+
                       {/* Vehicles */}
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col gap-1">
-                          <span className="text-white font-medium">{customer.stats.vehicleCount}</span>
-                          {customer.vehicles.slice(0, 2).map(v => (
-                            <span key={v.id} className="text-xs text-neutral-500 font-mono">{v.plate}</span>
-                          ))}
-                          {customer.vehicles.length > 2 && (
-                            <span className="text-xs text-neutral-600">+{customer.vehicles.length - 2} more</span>
-                          )}
-                        </div>
+                      <td className="px-5 py-4">
+                        <span className="text-white font-bold">{c.stats.vehicleCount}</span>
+                        {(c.vehicles||[]).slice(0, 1).map(v => (
+                          <div key={v.id} className="text-[10px] text-neutral-600 font-mono mt-0.5">{v.plate}</div>
+                        ))}
                       </td>
 
                       {/* Bookings */}
-                      <td className="px-4 py-3">
-                        <span className="text-white font-medium">{customer.stats.bookingCount}</span>
-                        {customer.bookings[0] && (
-                          <p className="text-xs text-neutral-500 mt-0.5">{customer.bookings[0].branch}</p>
-                        )}
-                      </td>
-
-                      {/* Orders */}
-                      <td className="px-4 py-3">
-                        <span className="text-white font-medium">{customer.stats.orderCount}</span>
+                      <td className="px-5 py-4">
+                        <span className={`font-bold ${c.stats.bookingCount > 0 ? 'text-[#FFD700]' : 'text-neutral-600'}`}>
+                          {c.stats.bookingCount}
+                        </span>
                       </td>
 
                       {/* Revenue */}
-                      <td className="px-4 py-3">
-                        <span className={`font-medium ${customer.stats.totalRevenue > 0 ? 'text-[#FFD700]' : 'text-neutral-600'}`}>
-                          {customer.stats.totalRevenue > 0 ? `Rs. ${customer.stats.totalRevenue.toLocaleString()}` : '—'}
+                      <td className="px-5 py-4">
+                        <span className={`font-bold text-sm ${c.stats.totalRevenue > 0 ? 'text-green-400' : 'text-neutral-700'}`}>
+                          {c.stats.totalRevenue > 0 ? `Rs. ${c.stats.totalRevenue.toLocaleString()}` : '—'}
                         </span>
                       </td>
 
                       {/* Last login */}
-                      <td className="px-4 py-3 text-neutral-400 text-xs">
-                        {timeAgo(customer.lastLogin)}
-                      </td>
+                      <td className="px-5 py-4 text-neutral-500 text-xs">{timeAgo(c.lastLogin)}</td>
 
                       {/* Joined */}
-                      <td className="px-4 py-3 text-neutral-500 text-xs">
-                        {fmtDate(customer.createdAt)}
-                      </td>
-
-                      {/* View */}
-                      <td className="px-4 py-3">
-                        <button className="flex items-center gap-1 text-xs text-neutral-500 hover:text-[#FFD700] transition-colors">
-                          <Eye className="w-3.5 h-3.5" /> View
-                        </button>
-                      </td>
+                      <td className="px-5 py-4 text-neutral-600 text-xs">{fmtDate(c.createdAt)}</td>
                     </tr>
                   );
                 })}
@@ -586,9 +558,14 @@ export function CustomersPage() {
             </table>
           </div>
         )}
+
+        {!loading && filtered.length > 0 && (
+          <div className="px-5 py-3 border-t border-neutral-800 text-xs text-neutral-600">
+            Showing {filtered.length} of {customers.length} customers
+          </div>
+        )}
       </div>
 
-      {/* Customer detail drawer */}
       {selected && <CustomerDrawer customer={selected} onClose={() => setSelected(null)} />}
     </div>
   );

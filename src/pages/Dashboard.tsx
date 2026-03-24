@@ -11,6 +11,7 @@ import { StaffPage } from './StaffPage';
 import { InventoryPage } from './InventoryPage';
 import { ReportsPage } from './ReportsPage';
 import { CustomersPage } from './CustomersPage';
+import { JobManagementPage } from './JobManagementPage';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -412,6 +413,7 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
       case 'user-management': return <UserManagement />;
       case 'corporate-data': return <CorporateManagementPage />;
       case 'customers':      return <CustomersPage />;   // ← ADDED
+      case 'jobs':           return <JobManagementPage />; // ← ADDED
       default:               return <div className="text-white">Page not found</div>;
     }
   };

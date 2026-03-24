@@ -1,28 +1,26 @@
-import React, { useState } from 'react';
-import { X, Search, Plus, Wrench, Edit2, Trash2, Phone, Mail } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { X, Search, Plus, Wrench, Edit2, Trash2, Phone, Mail, Eye, EyeOff, KeyRound } from 'lucide-react';
+
+const API = (import.meta.env.VITE_API_URL || 'https://anuratyres-backend-emm1774.vercel.app/api')
+  .replace(/\/api$/, '');
 
 interface StaffMember {
   id: number;
   name: string;
   role: string;
-  status: 'Available' | 'Busy' | 'On Leave';
+  status: 'Available' | 'Busy' | 'On Leave' | 'On Break';
   contact: string;
   email: string;
   bay: string;
   emergencyContact: string;
 }
 
-const initialStaff: StaffMember[] = [
-  { id: 1, name: 'Saman Perera', role: 'Lead Mechanic', status: 'Available', contact: '077-1234567', email: 'saman@anuratyres.lk', bay: 'Bay 1', emergencyContact: '071-1234567' },
-  { id: 2, name: 'John Doe', role: 'Mechanic', status: 'Busy', contact: '071-9876543', email: 'john@anuratyres.lk', bay: 'Bay 2', emergencyContact: '' },
-  { id: 3, name: 'Amal Silva', role: 'Tyre Technician', status: 'Available', contact: '076-5554444', email: 'amal@anuratyres.lk', bay: '-', emergencyContact: '' },
-  { id: 4, name: 'Ruwan Dias', role: 'Tyre Technician', status: 'On Leave', contact: '070-1112222', email: 'ruwan@anuratyres.lk', bay: '-', emergencyContact: '077-1112222' },
-  { id: 5, name: 'Kasun Raj', role: 'Junior Mechanic', status: 'Available', contact: '077-9998888', email: 'kasun@anuratyres.lk', bay: 'Bay 3', emergencyContact: '' },
-];
+// Staff loaded from API
 
 function statusColor(status: string) {
   if (status === 'Available') return 'bg-green-500/20 text-green-400 border border-green-500/30';
-  if (status === 'Busy') return 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30';
+  if (status === 'Busy')      return 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30';
+  if (status === 'On Break')  return 'bg-orange-500/20 text-orange-400 border border-orange-500/30';
   return 'bg-red-500/20 text-red-400 border border-red-500/30';
 }
 
@@ -36,24 +34,74 @@ function StaffModal({ staff, onClose, onSave }: {
 }) {
   const isEdit = !!staff;
   const [form, setForm] = useState({
-    name: staff?.name ?? '',
-    role: staff?.role ?? '',
-    status: (staff?.status ?? 'Available') as StaffMember['status'],
-    contact: staff?.contact ?? '',
-    email: staff?.email ?? '',
-    bay: staff?.bay ?? '-',
+    name:             staff?.name             ?? '',
+    role:             staff?.role             ?? '',
+    status:           (staff?.status          ?? 'Available') as StaffMember['status'],
+    contact:          staff?.contact          ?? '',
+    email:            staff?.email            ?? '',
+    bay:              staff?.bay              ?? '-',
     emergencyContact: staff?.emergencyContact ?? '',
+    // Login credentials + portal settings — only used when adding new staff
+    username:         '',
+    password:         '',
+    portalRole:       'mechanic',
+    portalBranch:     'Pannipitiya',
   });
-  const [error, setError] = useState('');
+  const [showPass,  setShowPass]  = useState(false);
+  const [saving,    setSaving]    = useState(false);
+  const [error,     setError]     = useState('');
+  const [credsNote, setCredsNote] = useState('');   // shows credentials after save
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.name.trim()) return setError('Name is required');
-    if (!form.role) return setError('Role is required');
+    if (!form.name.trim())    return setError('Name is required');
+    if (!form.role)           return setError('Role is required');
     if (!form.contact.trim()) return setError('Contact number is required');
+
+    // New staff require username + password for portal login
+    if (!isEdit) {
+      if (!form.username.trim()) return setError('Username is required for portal login');
+      if (form.password.length < 6) return setError('Password must be at least 6 characters');
+    }
+
     setError('');
+    setSaving(true);
+
+    try {
+      if (!isEdit) {
+        // Register with backend so staff can log into the staff portal
+        const res = await fetch(`${API}/api/staff?action=register`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: form.username.trim().toLowerCase(),
+            password: form.password,
+            name:     form.name.trim(),
+            role:     form.portalRole,
+            branch:   form.portalBranch,
+            phone:    form.contact.trim(),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to register staff');
+        // Show credentials note briefly before closing
+        setCredsNote(`Login: ${form.username.trim().toLowerCase()} / ${form.password}`);
+        setTimeout(() => {
+          onSave({ id: staff?.id, ...form, name: form.name.trim(), contact: form.contact.trim() });
+          onClose();
+        }, 2000);
+        return;
+      }
+    } catch (err: any) {
+      setError(err.message);
+      setSaving(false);
+      return;
+    }
+
+    // Edit — just update local state (no backend call yet for profile update)
     onSave({ id: staff?.id, ...form, name: form.name.trim(), contact: form.contact.trim() });
     onClose();
+    setSaving(false);
   };
 
   return (
@@ -61,16 +109,106 @@ function StaffModal({ staff, onClose, onSave }: {
       <div className="bg-neutral-900 rounded-xl border border-neutral-700 w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-neutral-900 border-b border-neutral-700 px-6 py-4 flex justify-between items-center">
           <h2 className="text-xl font-bold text-white">{isEdit ? 'Edit Staff Member' : 'Add Staff Member'}</h2>
-          <button onClick={onClose} className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition-colors"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition-colors">
+            <X className="w-5 h-5" />
+          </button>
         </div>
         <form onSubmit={submit} className="p-6 space-y-4">
           {error && <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">{error}</div>}
+
+          {/* Credentials saved confirmation */}
+          {credsNote && (
+            <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-green-400 text-sm">
+              <p className="font-bold mb-0.5">Staff account created!</p>
+              <p className="font-mono text-xs">{credsNote}</p>
+              <p className="text-green-600 text-xs mt-0.5">Share these credentials with the staff member.</p>
+            </div>
+          )}
 
           <div>
             <label className="text-sm font-medium text-white block mb-1.5">Full Name *</label>
             <input value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="e.g. Saman Perera"
               className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600 transition-colors" />
           </div>
+
+          {/* Username + Password — only shown when adding new staff */}
+          {!isEdit && (
+            <div className="grid grid-cols-2 gap-3 p-3 bg-neutral-800/50 border border-neutral-700 rounded-lg">
+              <div className="col-span-2 flex items-center gap-2 mb-1">
+                <KeyRound className="w-3.5 h-3.5 text-[#FFD700]" />
+                <span className="text-xs font-bold text-[#FFD700]">Staff Portal Login</span>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-neutral-400 block mb-1.5">Username *</label>
+                <input
+                  value={form.username}
+                  onChange={e => setForm({...form, username: e.target.value.toLowerCase().replace(/\s/g, '')})}
+                  placeholder="e.g. saman.p"
+                  autoComplete="off"
+                  className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-neutral-400 block mb-1.5">Password *</label>
+                <div className="relative">
+                  <input
+                    type={showPass ? 'text' : 'password'}
+                    value={form.password}
+                    onChange={e => setForm({...form, password: e.target.value})}
+                    placeholder="Min 6 chars"
+                    autoComplete="new-password"
+                    className="w-full px-3 py-2.5 pr-9 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600 transition-colors"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPass(v => !v)}
+                    className="absolute right-2.5 top-2.5 text-neutral-500 hover:text-neutral-300 transition-colors"
+                  >
+                    {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              {/* Branch + Role for portal */}
+              <div>
+                <label className="text-xs font-medium text-neutral-400 block mb-1.5">Branch *</label>
+                <select
+                  value={form.portalBranch}
+                  onChange={e => setForm({...form, portalBranch: e.target.value})}
+                  className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors"
+                >
+                  {['Pannipitiya', 'Ratnapura', 'Kalawana', 'Nivithigala'].map(b => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-neutral-400 block mb-1.5">Portal Role *</label>
+                <select
+                  value={form.portalRole}
+                  onChange={e => setForm({...form, portalRole: e.target.value})}
+                  className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors"
+                >
+                  <option value="mechanic">Mechanic</option>
+                  <option value="supervisor">Supervisor</option>
+                  <option value="super_admin">Super Admin</option>
+                </select>
+              </div>
+
+              {/* Live credentials preview */}
+              {form.username && form.password.length >= 6 && (
+                <div className="col-span-2 bg-neutral-900 rounded-lg px-3 py-2 border border-neutral-700 space-y-1">
+                  <p className="text-[10px] font-mono text-neutral-500">
+                    Login: <span className="text-neutral-300">{form.username}</span>
+                    {' / '}
+                    <span className="text-neutral-300">{form.password}</span>
+                  </p>
+                  <p className="text-[10px] text-neutral-600">
+                    {form.portalBranch} · {form.portalRole === 'super_admin' ? 'Super Admin' : form.portalRole === 'supervisor' ? 'Supervisor' : 'Mechanic'}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -89,6 +227,7 @@ function StaffModal({ staff, onClose, onSave }: {
                 className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors">
                 <option value="Available">Available</option>
                 <option value="Busy">Busy</option>
+                <option value="On Break">On Break</option>
                 <option value="On Leave">On Leave</option>
               </select>
             </div>
@@ -125,7 +264,7 @@ function StaffModal({ staff, onClose, onSave }: {
 
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 transition-colors">Cancel</button>
-            <button type="submit" className="flex-1 px-4 py-2.5 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors">{isEdit ? 'Save Changes' : 'Add Staff Member'}</button>
+            <button type="submit" disabled={saving} className="flex-1 px-4 py-2.5 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors disabled:opacity-60 flex items-center justify-center gap-2">{saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Staff Member'}</button>
           </div>
         </form>
       </div>
@@ -137,7 +276,38 @@ function StaffModal({ staff, onClose, onSave }: {
 // MAIN STAFF PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 export function StaffPage() {
-  const [staff, setStaff] = useState<StaffMember[]>(initialStaff);
+  const [staff,        setStaff]        = useState<StaffMember[]>([]);
+  const [staffLoading, setStaffLoading] = useState(true);
+  const [staffError,   setStaffError]   = useState<string | null>(null);
+
+  const fetchStaff = useCallback(async () => {
+    setStaffLoading(true);
+    setStaffError(null);
+    try {
+      const res  = await fetch(`${API}/api/staff`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load staff');
+      // Map API fields to StaffMember shape
+      const mapped: StaffMember[] = (Array.isArray(data) ? data : []).map((m: any, i: number) => ({
+        id:               m._id || i,
+        name:             m.name             || '',
+        role:             m.role             || '',
+        status:           (m.dayStatus?.status === 'on_break' ? 'On Break' :
+                           m.dayStatus?.status === 'active'   ? 'Available' : 'Available') as StaffMember['status'],
+        contact:          m.phone            || '',
+        email:            m.email            || '',
+        bay:              m.dayStatus?.bayNumber ? `Bay ${m.dayStatus.bayNumber}` : '-',
+        emergencyContact: '',
+      }));
+      setStaff(mapped);
+    } catch (err: any) {
+      setStaffError(err.message);
+    } finally {
+      setStaffLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchStaff(); }, [fetchStaff]);
   const [search, setSearch] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editMember, setEditMember] = useState<StaffMember | null>(null);
@@ -149,6 +319,8 @@ export function StaffPage() {
     } else {
       setStaff(prev => [...prev, { ...data, id: Date.now() }]);
     }
+    // Re-fetch from API to get the real saved data
+    setTimeout(() => fetchStaff(), 500);
   };
 
   const handleDelete = (id: number) => {
@@ -177,18 +349,44 @@ export function StaffPage() {
           <h2 className="text-3xl font-bold text-white mb-1">Staff Directory</h2>
           <p className="text-neutral-400 text-sm">Manage mechanics, technicians, and assignments.</p>
         </div>
-        <button onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors">
-          <Plus className="w-4 h-4" /> Add Staff Member
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={fetchStaff} disabled={staffLoading}
+            className="p-2 bg-neutral-900 border border-neutral-700 rounded-lg text-neutral-400 hover:text-white hover:border-neutral-600 transition-colors disabled:opacity-50">
+            <svg className={`w-4 h-4 ${staffLoading ? 'animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          </button>
+          <button onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors">
+            <Plus className="w-4 h-4" /> Add Staff Member
+          </button>
+        </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* Loading / error states */}
+      {staffLoading && (
+        <div className="flex items-center justify-center py-8 text-neutral-500 text-sm gap-2">
+          <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="40" strokeLinecap="round"/>
+          </svg>
+          Loading staff from database…
+        </div>
+      )}
+      {staffError && (
+        <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">
+          Failed to load staff: {staffError}
+          <button onClick={fetchStaff} className="ml-3 underline hover:no-underline">Retry</button>
+        </div>
+      )}
+
+      {/* Stats — now 4 cards including On Break */}
+      <div className="grid grid-cols-4 gap-4">
         {[
-          { label: 'Total Staff', value: staff.length, color: 'text-white' },
-          { label: 'Available', value: staff.filter(s => s.status === 'Available').length, color: 'text-green-400' },
-          { label: 'On Leave', value: staff.filter(s => s.status === 'On Leave').length, color: 'text-red-400' },
+          { label: 'Total Staff', value: staff.length,                                        color: 'text-white' },
+          { label: 'Available',   value: staff.filter(s => s.status === 'Available').length,  color: 'text-green-400' },
+          { label: 'On Break',    value: staff.filter(s => s.status === 'On Break').length,   color: 'text-orange-400' },
+          { label: 'On Leave',    value: staff.filter(s => s.status === 'On Leave').length,   color: 'text-red-400' },
         ].map(s => (
           <div key={s.label} className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 text-center">
             <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
@@ -244,6 +442,7 @@ export function StaffPage() {
                             style={{ background: 'transparent' }}>
                             <option value="Available">Available</option>
                             <option value="Busy">Busy</option>
+                            <option value="On Break">On Break</option>
                             <option value="On Leave">On Leave</option>
                           </select>
                         </td>
@@ -297,6 +496,9 @@ export function StaffPage() {
                     {assignedStaff && (
                       <div className="mt-2 text-xs text-neutral-500">
                         {assignedStaff.name} · {assignedStaff.role}
+                        {assignedStaff.status === 'On Break' && (
+                          <span className="ml-2 text-orange-400 font-medium">· On Break</span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -345,7 +547,7 @@ export function StaffPage() {
 
       {/* Modals */}
       {showAddModal && <StaffModal onClose={() => setShowAddModal(false)} onSave={handleSave} />}
-      {editMember && <StaffModal staff={editMember} onClose={() => setEditMember(null)} onSave={handleSave} />}
+      {editMember   && <StaffModal staff={editMember} onClose={() => setEditMember(null)} onSave={handleSave} />}
     </div>
   );
 }

@@ -10,8 +10,7 @@ import { Badge } from '../components/ui/Badge';
 import { Card, CardHeader, CardTitle } from '../components/ui/Card';
 import { AlertTriangle } from 'lucide-react';
 
-// ✅ FIX: API_URL must NOT have trailing slash. VITE_API_URL = https://xxx.vercel.app/api
-const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
+const API_URL = (import.meta.env.VITE_API_URL || 'https://anuratyres-backend-emm1774.vercel.app/api').replace(/\/$/, '');
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type BookingStatus = 'Pending' | 'In Progress' | 'Completed' | 'Cancelled' | 'Waiting';
@@ -32,10 +31,10 @@ interface Booking {
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 const BRANCHES = [
-  { id: '1', name: 'Pannipitiya Branch',  address: '278/2 High Level Rd, Pannipitiya',              phone: '077 578 5785',  hasFullService: true,  maxBookingsPerSlot: 3 },
-  { id: '2', name: 'Ratnapura Branch',    address: '151 Colombo Rd, Ratnapura',                     phone: '076 688 5885',  hasFullService: false, maxBookingsPerSlot: 2 },
-  { id: '3', name: 'Kalawana Branch',     address: 'Rathnapura road, Kalawana',                     phone: '0777 32 95 32', hasFullService: false, maxBookingsPerSlot: 2 },
-  { id: '4', name: 'Nivithigala Branch',  address: 'Tiruwanaketiya-Agalawatte Rd, Nivithigala',     phone: '045 227 9396',  hasFullService: false, maxBookingsPerSlot: 2 },
+  { id: '1', name: 'Pannipitiya Branch', shortName: 'Pannipitiya', address: '278/2 High Level Rd, Pannipitiya',          phone: '077 578 5785',  hasFullService: true,  maxBookingsPerSlot: 3 },
+  { id: '2', name: 'Ratnapura Branch',   shortName: 'Ratnapura',   address: '151 Colombo Rd, Ratnapura',                 phone: '076 688 5885',  hasFullService: false, maxBookingsPerSlot: 2 },
+  { id: '3', name: 'Kalawana Branch',    shortName: 'Kalawana',    address: 'Rathnapura Road, Kalawana',                 phone: '0777 32 95 32', hasFullService: false, maxBookingsPerSlot: 2 },
+  { id: '4', name: 'Nivithigala Branch', shortName: 'Nivithigala', address: 'Tiruwanaketiya-Agalawatte Rd, Nivithigala', phone: '045 227 9396',  hasFullService: false, maxBookingsPerSlot: 2 },
 ];
 
 const SERVICE_CATEGORIES = [
@@ -112,7 +111,7 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings }: {
     const b = BRANCHES.find(b => b.id === form.branchId);
     if (!b) return;
     const dateBookings = existingBookings.filter(
-      bk => bk.branch === b.name && bk.date === form.date && bk.status !== 'Cancelled'
+      bk => (bk.branch === b.shortName || bk.branch === b.name) && bk.date === form.date && bk.status !== 'Cancelled'
     );
     const slotCounts = new Map<string, number>();
     dateBookings.forEach(bk => {
@@ -128,11 +127,11 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings }: {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.branchId)              return setError('Please select a branch');
-    if (!form.category)              return setError('Please select a category');
+    if (!form.branchId)               return setError('Please select a branch');
+    if (!form.category)               return setError('Please select a category');
     if (form.serviceIds.length === 0) return setError('Please select at least one service');
-    if (!form.date)                  return setError('Please select a date');
-    if (!form.timeSlot)              return setError('Please select a time slot');
+    if (!form.date)                   return setError('Please select a date');
+    if (!form.timeSlot)               return setError('Please select a time slot');
     if (!availableSlots.includes(form.timeSlot)) return setError('This time slot is now fully booked.');
 
     setLoading(true);
@@ -145,10 +144,10 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings }: {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          branch:   { id: b.id, name: b.name, address: b.address, phone: b.phone },
+          branch:   { id: b.id, name: b.shortName, address: b.address, phone: b.phone }, // shortName matches job board
           category: form.category,
           services: svcs.map(s => ({ id: s.id, name: s.name, category: s.category })),
-          date:     new Date(form.date),
+          date:     new Date(`${form.date}T12:00:00.000Z`),
           timeSlot: form.timeSlot,
           customer: { name: form.name, email: form.email, phone: form.phone, vehicleNo: form.vehicleNo },
         }),
@@ -617,9 +616,7 @@ export function BookingsPage() {
     }
   };
 
-  // ✅ FIX: Full error details shown, response body parsed before throwing
   const handleStatusChange = async (id: string, status: BookingStatus) => {
-    console.log(`[BookingsPage] PATCH ${API_URL}/bookings/${id} → status: ${status}`);
     try {
       const res = await fetch(`${API_URL}/bookings/${id}`, {
         method:  'PATCH',
@@ -628,19 +625,12 @@ export function BookingsPage() {
       });
 
       const data = await res.json();
-      console.log('[BookingsPage] PATCH response:', data);
+      if (!res.ok) throw new Error(data.message || `Server returned ${res.status}`);
 
-      if (!res.ok) {
-        throw new Error(data.message || `Server returned ${res.status}`);
-      }
-
-      // ✅ Update local state immediately so UI reflects change without refetch
       setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b));
-
     } catch (err: any) {
-      console.error('[BookingsPage] Status update failed:', err);
       alert(`Failed to update status: ${err.message}`);
-      throw err; // Re-throw so BookingDetailModal can reset its loading state
+      throw err;
     }
   };
 
@@ -738,8 +728,8 @@ export function BookingsPage() {
             </div>
           </div>
 
-          {error    && <div className="p-4 bg-red-500/10 border-b border-red-500/20 text-red-400 text-sm text-center">{error}</div>}
-          {loading  && <div className="flex items-center justify-center py-16"><RefreshCw className="w-8 h-8 text-[#FFD700] animate-spin" /></div>}
+          {error   && <div className="p-4 bg-red-500/10 border-b border-red-500/20 text-red-400 text-sm text-center">{error}</div>}
+          {loading && <div className="flex items-center justify-center py-16"><RefreshCw className="w-8 h-8 text-[#FFD700] animate-spin" /></div>}
 
           {!loading && !error && filtered.length === 0 && (
             <div className="py-16 text-center">
