@@ -520,8 +520,8 @@
     const isPaused   = vehicle.overallStatus === 'paused';
     const isRunning  = vehicle.overallStatus === 'in_progress';
 
-    // Remaining = server value minus elapsed ticks
-    const remaining  = isDone ? 0 : Math.max(-9999, vehicle.remainingSecs - elapsedSecs);
+    // Remaining = server value minus elapsed ticks (freeze when paused or done)
+    const remaining  = isDone ? 0 : isPaused ? vehicle.remainingSecs : Math.max(-9999, vehicle.remainingSecs - elapsedSecs);
     const isOvertime = isRunning && remaining < 0;
 
     // Status class
@@ -564,7 +564,7 @@
                         fmtCountdown(vehicle.remainingSecs);
 
     const servicesHtml = vehicle.services.map(svc => {
-      const sRemaining  = isDone ? 0 : Math.max(-9999, svc.remainingSecs - elapsedSecs);
+      const sRemaining  = isDone ? 0 : svc.status === 'paused' ? svc.remainingSecs : Math.max(-9999, svc.remainingSecs - elapsedSecs);
       const sOvertime   = svc.status === 'in_progress' && sRemaining < 0;
       const sTimeClass  = svc.status === 'done'        ? 'grey' :
                           sOvertime                     ? 'red'  :
