@@ -208,28 +208,63 @@ interface UserType {
 }
 
 // ─── Firestore Helpers ────────────────────────────────────────────────────────
-const USERS_COLLECTION = 'at_users';
+// ── API helpers (replace Firestore helpers) ──────────────────────────────
+
+async function getAuthToken(): Promise<string> {
+  const { getAuth } = await import('firebase/auth');
+  const token = await getAuth().currentUser?.getIdToken();
+  if (!token) throw new Error('Not authenticated');
+  return token;
+}
 
 async function fetchAllUsers(): Promise<UserType[]> {
-  const snapshot = await getDocs(collection(db, USERS_COLLECTION));
-  return snapshot.docs.map(d => d.data() as UserType);
-}
-async function createUser(user: UserType): Promise<void> {
-  await setDoc(doc(db, USERS_COLLECTION, user.username), user);
-}
-async function updateUser(user: UserType): Promise<void> {
-  await updateDoc(doc(db, USERS_COLLECTION, user.username), {
-    name:     user.name,
-    role:     user.role,
-    branch:   user.branch,
-    email:    user.email,
-    mobile:   user.mobile,
-    password: user.password,
+  const token = await getAuthToken();
+  const res = await fetch('/api/users', {
+    headers: { Authorization: `Bearer ${token}` }
   });
+  if (!res.ok) throw new Error('Failed to fetch users');
+  return res.json();
 }
+
+async function createUser(user: UserType, tempPassword: string): Promise<void> {
+  const token = await getAuthToken();
+  const res = await fetch('/api/users', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body:    JSON.stringify({ ...user, tempPassword }),
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+}
+
+async function updateUser(user: UserType): Promise<void> {
+  const token = await getAuthToken();
+  const res = await fetch(`/api/users/${user.username}`, {
+    method:  'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body:    JSON.stringify(user),
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+}
+
 async function removeUser(username: string): Promise<void> {
-  await deleteDoc(doc(db, USERS_COLLECTION, username));
+  const token = await getAuthToken();
+  const res = await fetch(`/api/users/${username}`, {
+    method:  'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
 }
+
+async function resetPassword(username: string, tempPassword: string): Promise<void> {
+  const token = await getAuthToken();
+  const res = await fetch('/api/users/reset-password', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body:    JSON.stringify({ username, tempPassword }),
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+}
+
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 function Toast({ message, type = 'success', onClose }: {
@@ -646,7 +681,7 @@ export function UserManagement() {
         lastLogin:          null,
       };
 
-      await createUser(user);
+      await createUser(user, tempPassword);
       setUsers(prev => [...prev, user]);
       setNewUser(EMPTY_NEW_USER);
       setShowAddModal(false);
