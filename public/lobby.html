@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Anura Tyres — Service Status</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --yellow:  #FFD700;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --orange:  #f97316;
+      --blue:    #3b82f6;
+      --bg:      #0a0a0a;
+      --card:    #111111;
+      --border:  #1f1f1f;
+      --text:    #ffffff;
+      --muted:   #666666;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+
+    .screen {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      padding: 0;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 40px;
+      border-bottom: 1px solid var(--border);
+      background: #0d0d0d;
+      flex-shrink: 0;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .logo-icon {
+      width: 44px; height: 44px;
+      background: rgba(255,215,0,0.1);
+      border: 1px solid rgba(255,215,0,0.2);
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .logo-icon svg { width: 24px; height: 24px; color: var(--yellow); }
+    .brand-name {
+      font-size: 20px;
+      font-weight: 900;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .brand-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+    .branch-badge {
+      font-size: 13px;
+      font-weight: 700;
+      padding: 6px 14px;
+      background: rgba(255,215,0,0.1);
+      border: 1px solid rgba(255,215,0,0.2);
+      border-radius: 999px;
+      color: var(--yellow);
+    }
+    .clock {
+      font-size: 22px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      letter-spacing: 0.04em;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 40px;
+      background: #0d0d0d;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .controls label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      white-space: nowrap;
+    }
+    .controls select,
+    .controls input {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      padding: 6px 12px;
+      outline: none;
+    }
+    .controls select:focus,
+    .controls input:focus {
+      border-color: rgba(255,215,0,0.4);
+    }
+    .refresh-btn {
+      margin-left: auto;
+      display: flex; align-items: center; gap: 6px;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .refresh-btn:hover { color: var(--text); border-color: #444; }
+    .refresh-btn svg { width: 14px; height: 14px; }
+    .refresh-btn.spinning svg { animation: spin 1s linear infinite; }
+
+    .grid-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px 40px;
+    }
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 20px;
+    }
+
+    .vehicle-card {
+      background: var(--card);
+      border-radius: 20px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      transition: border-color 0.3s;
+      position: relative;
+    }
+    .vehicle-card.status-in_progress { border-color: rgba(34,197,94,0.3); }
+    .vehicle-card.status-paused      { border-color: rgba(249,115,22,0.3); }
+    .vehicle-card.status-done        { border-color: rgba(255,255,255,0.08); opacity: 0.7; }
+    .vehicle-card.status-overtime    { border-color: rgba(239,68,68,0.4); }
+
+    .card-header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .card-header-left {
+      flex: 1;
+    }
+    .plate-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+    .plate {
+      font-size: 28px;
+      font-weight: 900;
+      font-family: 'Courier New', monospace;
+      letter-spacing: 0.08em;
+      color: var(--text);
+    }
+    .status-pill {
+      font-size: 11px;
+      font-weight: 800;
+      padding: 5px 12px;
+      border-radius: 999px;
+      border: 1px solid;
+      white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .pill-in_progress { background: rgba(34,197,94,0.15);  border-color: rgba(34,197,94,0.3);  color: #4ade80; }
+    .pill-paused      { background: rgba(249,115,22,0.15); border-color: rgba(249,115,22,0.3); color: #fb923c; }
+    .pill-assigned    { background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.3); color: #60a5fa; }
+    .pill-done        { background: rgba(255,255,255,0.05);border-color: rgba(255,255,255,0.1);color: #6b7280; }
+    .pill-overtime    { background: rgba(239,68,68,0.15);  border-color: rgba(239,68,68,0.3);  color: #f87171; }
+
+    .customer-name {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .stop-btn {
+      background: rgba(239,68,68,0.2);
+      border: 1px solid rgba(239,68,68,0.4);
+      color: #f87171;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .stop-btn:hover {
+      background: rgba(239,68,68,0.3);
+      border-color: rgba(239,68,68,0.6);
+    }
+
+    .countdown-area {
+      padding: 20px 24px;
+      text-align: center;
+    }
+    .countdown {
+      font-size: 64px;
+      font-weight: 900;
+      font-family: 'Courier New', monospace;
+      letter-spacing: 0.04em;
+      line-height: 1;
+      transition: color 0.3s;
+    }
+    .countdown.green    { color: var(--green); }
+    .countdown.red      { color: var(--red); }
+    .countdown.orange   { color: var(--orange); }
+    .countdown.grey     { color: var(--muted); }
+    .countdown-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: 6px;
+    }
+
+    .services-area {
+      padding: 0 24px 20px;
+    }
+    .service-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: #1a1a1a;
+      border-radius: 10px;
+      margin-bottom: 8px;
+      border: 1px solid var(--border);
+    }
+    .service-row:last-child { margin-bottom: 0; }
+    .service-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .service-time {
+      font-size: 12px;
+      font-family: 'Courier New', monospace;
+      font-weight: 700;
+    }
+    .service-time.green  { color: var(--green); }
+    .service-time.red    { color: var(--red); }
+    .service-time.orange { color: var(--orange); }
+    .service-time.grey   { color: var(--muted); }
+
+    .done-banner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 28px 24px;
+      text-align: center;
+    }
+    .done-icon {
+      width: 56px; height: 56px;
+      background: rgba(34,197,94,0.15);
+      border: 2px solid rgba(34,197,94,0.3);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .done-icon svg { width: 28px; height: 28px; color: var(--green); }
+    .done-title {
+      font-size: 22px;
+      font-weight: 900;
+      color: var(--green);
+      letter-spacing: -0.01em;
+    }
+    .done-sub {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 60vh;
+      text-align: center;
+      gap: 16px;
+      color: var(--muted);
+    }
+    .empty-state svg { width: 56px; height: 56px; opacity: 0.2; }
+    .empty-title { font-size: 20px; font-weight: 700; }
+    .empty-sub   { font-size: 14px; }
+
+    .footer {
+      padding: 10px 40px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #0d0d0d;
+      flex-shrink: 0;
+    }
+    .footer-left  { font-size: 11px; color: var(--muted); }
+    .footer-right { font-size: 11px; color: #333; }
+
+    /* Modal Styles */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-overlay.show {
+      display: flex;
+    }
+    .modal {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      max-width: 500px;
+      width: 90%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+    }
+    .modal-title {
+      font-size: 24px;
+      font-weight: 900;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+    .modal-subtitle {
+      font-size: 14px;
+      color: var(--muted);
+      margin-bottom: 24px;
+    }
+    .reason-options {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .reason-btn {
+      background: #1a1a1a;
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: left;
+    }
+    .reason-btn:hover {
+      background: #252525;
+      border-color: #444;
+    }
+    .reason-btn.selected {
+      background: rgba(255,215,0,0.15);
+      border-color: var(--yellow);
+      color: var(--yellow);
+    }
+    .reason-btn.completed { border-left: 4px solid var(--green); }
+    .reason-btn.completed:hover { border-color: var(--green); }
+    .reason-btn.completed.selected { 
+      color: var(--green); 
+      border-color: var(--green); 
+      background: rgba(34,197,94,0.15); 
+    }
+
+    .reason-btn.terminated { border-left: 4px solid var(--red); }
+    .reason-btn.terminated:hover { border-color: var(--red); }
+    .reason-btn.terminated.selected { 
+      color: var(--red); 
+      border-color: var(--red); 
+      background: rgba(239,68,68,0.15); 
+    }
+
+    .reason-btn.stock { border-left: 4px solid var(--orange); }
+    .reason-btn.stock:hover { border-color: var(--orange); }
+    .reason-btn.stock.selected { 
+      color: var(--orange); 
+      border-color: var(--orange); 
+      background: rgba(249,115,22,0.15); 
+    }
+
+    .reason-btn.price { border-left: 4px solid var(--blue); }
+    .reason-btn.price:hover { border-color: var(--blue); }
+    .reason-btn.price.selected { 
+      color: var(--blue); 
+      border-color: var(--blue); 
+      background: rgba(59,130,246,0.15); 
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 12px;
+    }
+    .modal-btn {
+      flex: 1;
+      padding: 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+    }
+    .modal-btn-cancel {
+      background: #1a1a1a;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .modal-btn-cancel:hover {
+      background: #252525;
+    }
+    .modal-btn-confirm {
+      background: var(--red);
+      color: white;
+    }
+    .modal-btn-confirm:hover:not(:disabled) {
+      background: #dc2626;
+    }
+    .modal-btn-confirm:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.6; }
+    }
+    .pulse { animation: pulse-glow 2s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+
+<div class="screen" id="app">
+
+  <header class="header">
+    <div class="header-left">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-name">Anura Tyres</div>
+        <div class="brand-sub">Service Status Display</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <span class="branch-badge" id="branch-badge">Pannipitiya</span>
+      <div class="clock" id="clock">00:00:00</div>
+    </div>
+  </header>
+
+  <div class="controls">
+    <label for="branch-select">Branch</label>
+    <select id="branch-select">
+      <option value="Pannipitiya">Pannipitiya</option>
+      <option value="Ratnapura">Ratnapura</option>
+      <option value="Kalawana">Kalawana</option>
+      <option value="Nivithigala">Nivithigala</option>
+    </select>
+
+    <label for="date-input" style="margin-left:12px">Date</label>
+    <input type="date" id="date-input" />
+
+    <button class="refresh-btn" id="refresh-btn" onclick="fetchLobby()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"></polyline>
+        <polyline points="1 20 1 14 7 14"></polyline>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+      </svg>
+      Refresh
+    </button>
+  </div>
+
+  <div class="grid-area">
+    <div class="cards-grid" id="cards-grid">
+      <div class="empty-state" id="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <div class="empty-title">No active jobs</div>
+        <div class="empty-sub">Jobs will appear here once mechanics start working</div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span class="footer-left" id="last-updated">Waiting for data…</span>
+    <span class="footer-right">Auto-refreshes every 10 seconds</span>
+  </footer>
+
+</div>
+
+<!-- Stop Job Modal -->
+<div class="modal-overlay" id="stop-modal">
+  <div class="modal">
+    <div class="modal-title">Stop Job</div>
+    <div class="modal-subtitle">Select a reason for stopping this job</div>
+    
+    <div class="reason-options">
+      <button class="reason-btn completed" data-reason="COMPLETED" onclick="selectReason(this)">
+        ✓ Completed
+      </button>
+      <button class="reason-btn terminated" data-reason="TERMINATED" onclick="selectReason(this)">
+        ✗ Terminate
+      </button>
+      <button class="reason-btn stock" data-reason="STOCK_ISSUE" onclick="selectReason(this)">
+        ⚠ Stock Issue
+      </button>
+      <button class="reason-btn price" data-reason="PRICE_DISAGREE" onclick="selectReason(this)">
+        💲 Price Disagree
+      </button>
+    </div>
+
+    <div class="modal-actions">
+      <button class="modal-btn modal-btn-cancel" onclick="closeStopModal()">Cancel</button>
+      <button class="modal-btn modal-btn-confirm" id="confirm-stop-btn" disabled onclick="confirmStopJob()">Stop Job</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const API = 'https://anuratyres-backend-emm1774.vercel.app';
+
+  let lobbyData = [];
+  let fetchedAt = 0;
+  let selectedStopReason = null;
+  let stopJobPlate = null;
+
+  const overtimeRegistry = {};
+
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('date-input').value = today;
+
+  function updateClock() {
+    const now = new Date();
+    document.getElementById('clock').textContent =
+      now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  function tick() {
+    if (!lobbyData.length) return;
+    const elapsed = Math.floor((Date.now() - fetchedAt) / 1000);
+    renderCards(elapsed);
+  }
+
+  async function fetchLobby() {
+    const branch = document.getElementById('branch-select').value;
+    const date   = document.getElementById('date-input').value;
+    const btn    = document.getElementById('refresh-btn');
+
+    document.getElementById('branch-badge').textContent = branch;
+    btn.classList.add('spinning');
+
+    try {
+      const res  = await fetch(`${API}/api/jobs?resource=lobby&branch=${encodeURIComponent(branch)}&date=${date}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Fetch failed');
+
+      const incoming = Array.isArray(data) ? data : [];
+
+      for (const vehicle of incoming) {
+        const plate = vehicle.vehiclePlate;
+        const isRunning = vehicle.overallStatus === 'in_progress';
+        const serverRemaining = vehicle.remainingSecs;
+
+        if (isRunning && serverRemaining <= 0) {
+          if (!overtimeRegistry[plate]) {
+            overtimeRegistry[plate] = Date.now();
+          }
+        } else {
+          delete overtimeRegistry[plate];
+        }
+      }
+
+      lobbyData = incoming;
+      fetchedAt = Date.now();
+      document.getElementById('last-updated').textContent =
+        'Last updated: ' + new Date().toLocaleTimeString('en-GB');
+      renderCards(0);
+    } catch (err) {
+      document.getElementById('last-updated').textContent = 'Error: ' + err.message;
+    } finally {
+      btn.classList.remove('spinning');
+    }
+  }
+
+  function fmtCountdown(secs) {
+    const abs = Math.abs(secs);
+    const m   = String(Math.floor(abs / 60)).padStart(2, '0');
+    const s   = String(abs % 60).padStart(2, '0');
+    return (secs < 0 ? '-' : '') + m + ':' + s;
+  }
+
+  function computeRemaining(vehicle, elapsedSecs) {
+    const isDone    = vehicle.overallStatus === 'done';
+    const isPaused  = vehicle.overallStatus === 'paused';
+    const isRunning = vehicle.overallStatus === 'in_progress';
+    const plate     = vehicle.vehiclePlate;
+
+    if (isDone)   return 0;
+    if (isPaused) return vehicle.remainingSecs;
+
+    if (isRunning) {
+      const reg = overtimeRegistry[plate];
+      if (reg) {
+        const secondsInOvertime = Math.floor((Date.now() - reg) / 1000);
+        return -secondsInOvertime;
+      }
+      return vehicle.remainingSecs - elapsedSecs;
+    }
+
+    return vehicle.remainingSecs;
+  }
+
+  // Modal Functions
+  function openStopModal(plate) {
+    stopJobPlate = plate;
+    selectedStopReason = null;
+    document.getElementById('stop-modal').classList.add('show');
+    
+    document.querySelectorAll('.reason-btn').forEach(btn => {
+      btn.classList.remove('selected');
+    });
+    document.getElementById('confirm-stop-btn').disabled = true;
+  }
+
+  function closeStopModal() {
+    document.getElementById('stop-modal').classList.remove('show');
+    stopJobPlate = null;
+    selectedStopReason = null;
+  }
+
+  function selectReason(btnElement) {
+    const reason = btnElement.dataset.reason;
+    selectedStopReason = reason;
+    
+    document.querySelectorAll('.reason-btn').forEach(btn => {
+      btn.classList.remove('selected');
+    });
+    btnElement.classList.add('selected');
+    
+    document.getElementById('confirm-stop-btn').disabled = false;
+  }
+
+  async function confirmStopJob() {
+    if (!stopJobPlate || !selectedStopReason) return;
+
+    const btn = document.getElementById('confirm-stop-btn');
+    btn.disabled = true;
+    btn.textContent = 'Stopping...';
+
+    try {
+      const res = await fetch(`${API}/api/jobs/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vehiclePlate: stopJobPlate,
+          reason: selectedStopReason
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+
+      console.log('✓ Job stopped successfully:', data);
+      closeStopModal();
+      
+      setTimeout(() => fetchLobby(), 500);
+      
+    } catch (err) {
+      console.error('❌ Error:', err);
+      alert('Error stopping job: ' + err.message);
+      btn.disabled = false;
+      btn.textContent = 'Stop Job';
+    }
+  }
+
+  function renderCards(elapsedSecs) {
+    const grid  = document.getElementById('cards-grid');
+    const empty = document.getElementById('empty-state');
+
+    const visible = lobbyData.filter(v =>
+      v.overallStatus !== 'done' ||
+      v.services.some(s => s.status === 'done')
+    );
+
+    if (visible.length === 0) {
+      empty.style.display = 'flex';
+      Array.from(grid.children).forEach(c => {
+        if (c.id !== 'empty-state') c.remove();
+      });
+      return;
+    }
+    empty.style.display = 'none';
+
+    const existing = {};
+    Array.from(grid.children).forEach(c => {
+      if (c.dataset.plate) existing[c.dataset.plate] = c;
+    });
+
+    const plates = new Set();
+    for (const vehicle of visible) {
+      plates.add(vehicle.vehiclePlate);
+      let card = existing[vehicle.vehiclePlate];
+      if (!card) {
+        card = document.createElement('div');
+        card.className = 'vehicle-card';
+        card.dataset.plate = vehicle.vehiclePlate;
+        grid.appendChild(card);
+      }
+      renderCard(card, vehicle, elapsedSecs);
+    }
+
+    Object.keys(existing).forEach(p => {
+      if (!plates.has(p)) existing[p].remove();
+    });
+  }
+
+  function renderCard(card, vehicle, elapsedSecs) {
+    const isDone    = vehicle.overallStatus === 'done';
+    const isPaused  = vehicle.overallStatus === 'paused';
+    const isRunning = vehicle.overallStatus === 'in_progress';
+
+    const remaining  = computeRemaining(vehicle, elapsedSecs);
+    const isOvertime = isRunning && remaining < 0;
+
+    card.className = 'vehicle-card status-' + (isOvertime ? 'overtime' : vehicle.overallStatus);
+
+    if (isDone) {
+      card.innerHTML = `
+        <div class="card-header">
+          <div class="card-header-left">
+            <div class="plate-row">
+              <span class="plate">${vehicle.vehiclePlate}</span>
+              <span class="status-pill pill-done">Done</span>
+            </div>
+            ${vehicle.customerName ? `<div class="customer-name">${vehicle.customerName}</div>` : ''}
+          </div>
+        </div>
+        <div class="done-banner">
+          <div class="done-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </div>
+          <div class="done-title">Job is done!</div>
+          <div class="done-sub">Please come to the sales counter</div>
+        </div>`;
+      return;
+    }
+
+    const pillClass = isOvertime ? 'pill-overtime' :
+                      isPaused   ? 'pill-paused' :
+                      isRunning  ? 'pill-in_progress' : 'pill-assigned';
+    const pillLabel = isOvertime ? 'Overtime' :
+                      isPaused   ? 'Paused' :
+                      isRunning  ? 'In Progress' : 'Assigned';
+
+    const cdClass = isOvertime ? 'red' : isPaused ? 'orange' : isRunning ? 'green' : 'grey';
+    const cdLabel = isOvertime ? '⚠ Overtime' : isPaused ? 'Paused' :
+                    isRunning  ? 'Remaining time' : 'Waiting to start';
+    const cdValue = (isRunning || isPaused)
+      ? fmtCountdown(remaining)
+      : fmtCountdown(vehicle.remainingSecs);
+
+    const servicesHtml = vehicle.services.map(svc => {
+      let sRemaining;
+      if (isDone) {
+        sRemaining = 0;
+      } else if (svc.status === 'paused') {
+        sRemaining = svc.remainingSecs;
+      } else {
+        sRemaining = svc.remainingSecs - elapsedSecs;
+      }
+
+      const sOvertime  = svc.status === 'in_progress' && sRemaining < 0;
+      const sTimeClass = svc.status === 'done'        ? 'grey'   :
+                         sOvertime                     ? 'red'    :
+                         svc.status === 'in_progress'  ? 'green'  :
+                         svc.status === 'paused'        ? 'orange' : 'grey';
+      const sTimeVal   = svc.status === 'done'         ? 'Done' :
+                         (svc.status === 'in_progress' || svc.status === 'paused')
+                           ? fmtCountdown(sRemaining)
+                           : `${svc.allocatedMins}m`;
+      return `
+        <div class="service-row">
+          <span class="service-name">${svc.service}</span>
+          <span class="service-time ${sTimeClass}">${sTimeVal}</span>
+        </div>`;
+    }).join('');
+
+    const showStopBtn = isRunning || isPaused;
+
+    card.innerHTML = `
+      <div class="card-header">
+        <div class="card-header-left">
+          <div class="plate-row">
+            <span class="plate">${vehicle.vehiclePlate}</span>
+            <span class="status-pill ${pillClass}">${pillLabel}</span>
+          </div>
+          ${vehicle.customerName ? `<div class="customer-name">${vehicle.customerName}</div>` : ''}
+        </div>
+        ${showStopBtn ? `
+          <div class="card-actions">
+            <button class="stop-btn" onclick="openStopModal('${vehicle.vehiclePlate}')">Stop</button>
+          </div>
+        ` : ''}
+      </div>
+      <div class="countdown-area">
+        <div class="countdown ${cdClass} ${isRunning ? 'pulse' : ''}">${cdValue}</div>
+        <div class="countdown-label">${cdLabel}</div>
+      </div>
+      <div class="services-area">${servicesHtml}</div>`;
+  }
+
+  document.getElementById('branch-select').addEventListener('change', fetchLobby);
+  document.getElementById('date-input').addEventListener('change', fetchLobby);
+
+  setInterval(fetchLobby, 10000);
+  setInterval(tick, 1000);
+
+  fetchLobby();
+</script>
+</body>
+</html>
