@@ -1,11 +1,11 @@
-// BookingsPage.tsx - COMPLETE FILE
-import React, { useState, useEffect } from 'react';
+// BookingsPage.tsx - COMPLETE FILE  (late-alert edition)
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Calendar, Plus, ChevronLeft, ChevronRight, X,
   PlayCircle, CheckCircle, XCircle, Search,
-  RefreshCw, Clock, MapPin, User, Car, Printer, List, Shield
+  RefreshCw, Clock, MapPin, User, Car, Printer, List, Shield,
+  AlertTriangle, BellRing, PhoneCall,
 } from 'lucide-react';
-import { AlertTriangle } from 'lucide-react';
 import { getSessionUser, canSeeAllBranches, bookingMatchesBranch, type UserRole } from '../lib/auth';
 
 const API_URL = (import.meta.env.VITE_API_URL || 'https://anuratyres-backend-emm1774.vercel.app/api').replace(/\/$/, '');
@@ -17,12 +17,10 @@ const SL_PLATE_PATTERNS: RegExp[] = [
   /^\d{2}-\d{4}$/,
   /^\d{1,2}\sශ්‍රී\s\d{4}$/,
 ];
-
 const validateSLPlate = (value: string): boolean => {
   if (!value.trim()) return true;
   return SL_PLATE_PATTERNS.some(p => p.test(value.trim()));
 };
-
 const formatPlate = (raw: string): { formatted: string; maxLength: number } => {
   if (/ශ/.test(raw)) return { formatted: raw, maxLength: 9 };
   const up = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -46,7 +44,6 @@ const formatPlate = (raw: string): { formatted: string; maxLength: number } => {
   const formatted = digits.length > 0 ? `${province} ${series}-${digits.slice(0, 4)}` : `${province} ${series}`;
   return { formatted, maxLength: is3Letter ? 11 : 10 };
 };
-
 const PLATE_FORMATS = [
   { label: 'Modern 3-Letter', example: 'WP CBA-1234' },
   { label: 'Modern 2-Letter', example: 'WP GA-1234'  },
@@ -72,6 +69,21 @@ interface Booking {
   phone?: string;
 }
 
+// ─── Late alert state per booking ─────────────────────────────────────────────
+type AlertLevel = 10 | 30;
+interface LateAlert {
+  bookingId:   string;
+  level:       AlertLevel;
+  customer:    string;
+  timeSlot:    string;
+  service:     string;
+  branch:      string;
+  phone?:      string;
+  smsSent:     boolean;
+  dismissed:   boolean;
+  autoCancelled: boolean;
+}
+
 // ─── Data ─────────────────────────────────────────────────────────────────────
 const BRANCHES = [
   { id: '1', name: 'Pannipitiya Branch', shortName: 'Pannipitiya', address: '278/2 High Level Rd, Pannipitiya',          phone: '077 578 5785',  hasFullService: true,  maxBookingsPerSlot: 3 },
@@ -79,13 +91,11 @@ const BRANCHES = [
   { id: '3', name: 'Kalawana Branch',    shortName: 'Kalawana',    address: 'Rathnapura Road, Kalawana',                 phone: '0777 32 95 32', hasFullService: false, maxBookingsPerSlot: 2 },
   { id: '4', name: 'Nivithigala Branch', shortName: 'Nivithigala', address: 'Tiruwanaketiya-Agalawatte Rd, Nivithigala', phone: '045 227 9396',  hasFullService: false, maxBookingsPerSlot: 2 },
 ];
-
 const SERVICE_CATEGORIES = [
   { id: 'Anura Tyres', label: 'Anura Tyres', description: 'Tyre fitting, balancing & alignment' },
   { id: 'Mechanix',    label: 'Mechanix',    description: 'Full mechanical services' },
   { id: 'Truck & Bus', label: 'Truck & Bus', description: 'Heavy vehicle services' },
 ];
-
 const SERVICES = [
   { id: 't1', name: 'Wheel Alignment',        category: 'Anura Tyres' },
   { id: 't2', name: 'Wheel Balancing',         category: 'Anura Tyres' },
@@ -101,14 +111,13 @@ const SERVICES = [
   { id: 'b2', name: 'Truck Tyre Change',       category: 'Truck & Bus' },
   { id: 'b3', name: 'Bus Full Service',        category: 'Truck & Bus' },
 ];
-
 const TIME_SLOTS = [
   '08:30','09:00','09:30','10:00','10:30','11:00','11:30','12:00',
   '13:00','13:30','14:00','14:30','15:00','15:30','16:00','16:30',
   '17:00','17:30','18:00','18:30','19:00',
 ];
 
-// ─── Status Badge ─────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function statusBadge(status: BookingStatus) {
   const map: Record<BookingStatus, string> = {
     'Pending':     'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
@@ -122,6 +131,231 @@ function statusBadge(status: BookingStatus) {
       {status}
     </span>
   );
+}
+
+/** Parse "HH:MM" time slot into today's Date object */
+function slotToDate(dateStr: string, timeSlot: string): Date | null {
+  const [h, m] = timeSlot.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return null;
+  // dateStr is YYYY-MM-DD
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setHours(h, m, 0, 0);
+  return d;
+}
+
+/** Returns how many minutes past the slot time we are (negative = not yet due) */
+function minutesLate(dateStr: string, timeSlot: string): number {
+  const slot = slotToDate(dateStr, timeSlot);
+  if (!slot) return -1;
+  return Math.floor((Date.now() - slot.getTime()) / 60_000);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LATE ALERT BANNER
+// ═══════════════════════════════════════════════════════════════════════════════
+function LateAlertBanner({
+  alert,
+  onDismiss,
+  onMarkArrived,
+}: {
+  alert: LateAlert;
+  onDismiss: () => void;
+  onMarkArrived: () => void;
+}) {
+  const is30 = alert.level === 30;
+
+  return (
+    <div
+      className={`relative flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 rounded-xl border text-sm
+        ${is30
+          ? 'bg-red-500/10 border-red-500/40 text-red-300'
+          : 'bg-orange-500/10 border-orange-500/40 text-orange-300'
+        }`}
+    >
+      {/* Pulsing dot */}
+      <span className="relative flex-shrink-0 hidden sm:flex h-3 w-3 mt-0.5">
+        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75
+          ${is30 ? 'bg-red-400' : 'bg-orange-400'}`} />
+        <span className={`relative inline-flex rounded-full h-3 w-3
+          ${is30 ? 'bg-red-500' : 'bg-orange-500'}`} />
+      </span>
+
+      {/* Icon */}
+      {is30
+        ? <XCircle   className="w-4 h-4 flex-shrink-0 text-red-400" />
+        : <BellRing  className="w-4 h-4 flex-shrink-0 text-orange-400 animate-bounce" />
+      }
+
+      {/* Message */}
+      <div className="flex-1 min-w-0">
+        {/* Title row */}
+        <div className="font-medium leading-snug">
+          <span className="font-bold">
+            {is30 ? '🚫 Auto-cancelled' : '⏰ Late customer'}
+          </span>
+          <span className="text-neutral-500 mx-1">·</span>
+          <span className="font-semibold">{alert.customer}</span>
+          <span className="text-neutral-400"> — {alert.service}</span>
+        </div>
+        {/* Detail row — each piece on its own, plain spaces between */}
+        <div className="text-xs text-neutral-400 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <span className="font-mono">{alert.timeSlot}</span>
+          <span className="text-neutral-600">·</span>
+          <span>{alert.branch}</span>
+          {alert.phone && (
+            <>
+              <span className="text-neutral-600">·</span>
+              <span className="inline-flex items-center gap-1">
+                <PhoneCall className="w-3 h-3 flex-shrink-0" />
+                {alert.phone}
+              </span>
+            </>
+          )}
+        </div>
+        {/* SMS status row */}
+        <div className={`text-xs mt-1 ${alert.smsSent ? 'text-green-500/70' : 'text-red-400/70'}`}>
+          {is30
+            ? alert.smsSent
+              ? '✓ Auto-cancelled · SMS sent to customer.'
+              : '✗ Auto-cancelled · SMS failed — contact customer manually.'
+            : alert.smsSent
+              ? '✓ SMS sent — customer notified.'
+              : '✗ SMS failed — please contact customer manually.'
+          }
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {!is30 && (
+          <button
+            onClick={onMarkArrived}
+            className="px-3 py-1.5 bg-green-500/20 border border-green-500/30 text-green-400 rounded-lg text-xs font-medium hover:bg-green-500/30 transition-colors whitespace-nowrap"
+          >
+            Mark Arrived
+          </button>
+        )}
+        <button
+          onClick={onDismiss}
+          className="p-1.5 text-neutral-500 hover:text-white hover:bg-neutral-700 rounded-lg transition-colors"
+          title="Dismiss"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Resolve the branch display name from whatever string the DB returns.
+ * Tries to match against BRANCHES shortName / name, falls back to the raw value.
+ */
+function resolveBranchName(raw: string | undefined): string {
+  if (!raw) return 'N/A';
+  const match = BRANCHES.find(
+    b =>
+      b.shortName.toLowerCase() === raw.toLowerCase() ||
+      b.name.toLowerCase() === raw.toLowerCase() ||
+      raw.toLowerCase().includes(b.shortName.toLowerCase()),
+  );
+  return match ? match.shortName : raw;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LATE ALERT ENGINE HOOK
+// ═══════════════════════════════════════════════════════════════════════════════
+/**
+ * Polls every 60 seconds. For each Pending booking today:
+ *   +10 min → fires level-10 alert (SMS)
+ *   +30 min → fires level-30 alert (SMS + auto-cancel)
+ *
+ * Tracks fired alerts in a ref so each level fires at most once per booking.
+ */
+function useLateAlerts(
+  bookings: Booking[],
+  onAutoCancel: (bookingId: string) => void,
+) {
+  const [alerts, setAlerts]   = useState<LateAlert[]>([]);
+  // fired: Set of "<bookingId>-<level>"
+  const firedRef = useRef<Set<string>>(new Set());
+  const sessionUser = getSessionUser();
+
+  const runCheck = useCallback(async () => {
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const candidates = bookings.filter(
+      b => b.status === 'Pending' && b.date === todayStr && b.timeSlot,
+    );
+
+    for (const booking of candidates) {
+      const late = minutesLate(booking.date, booking.timeSlot!);
+      if (late < 10) continue; // Not due yet
+
+      const levels: AlertLevel[] = late >= 30 ? [10, 30] : [10];
+
+      for (const level of levels) {
+        const key = `${booking.id}-${level}`;
+        if (firedRef.current.has(key)) continue; // Already fired
+        firedRef.current.add(key);
+
+        // ── Call backend ────────────────────────────────────────────────────
+        let smsSent      = false;
+        let autoCancelled = false;
+        try {
+          const res = await fetch(`${API_URL}/bookings`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-User-Role':   sessionUser?.role   || 'Cashier',
+              'X-User-Branch': sessionUser?.branch || '',
+            },
+            // bookingId in body — Vercel exposes only /api/bookings, not sub-paths
+            body: JSON.stringify({ action: 'late-alert', bookingId: booking.id, minutesLate: level }),
+          });
+          const data = await res.json();
+          smsSent       = data.smsSent      ?? false;
+          autoCancelled = data.autoCancelled ?? false;
+        } catch (err) {
+          console.error('[late-alert] fetch failed:', err);
+        }
+
+        // ── Push alert into UI ──────────────────────────────────────────────
+        const newAlert: LateAlert = {
+          bookingId:   booking.id,
+          level,
+          customer:    booking.customer,
+          timeSlot:    booking.timeSlot!,
+          service:     booking.service,
+          branch:      resolveBranchName(booking.branch),  // ← normalised short name
+          phone:       booking.phone,
+          smsSent,
+          dismissed:   false,
+          autoCancelled,
+        };
+        setAlerts(prev => [...prev, newAlert]);
+
+        // ── Update local booking state if auto-cancelled ────────────────────
+        if (autoCancelled) onAutoCancel(booking.id);
+      }
+    }
+  }, [bookings, sessionUser, onAutoCancel]);
+
+  // Run immediately on mount, then every 60 s
+  useEffect(() => {
+    runCheck();
+    const id = setInterval(runCheck, 60_000);
+    return () => clearInterval(id);
+  }, [runCheck]);
+
+  const dismissAlert = (bookingId: string, level: AlertLevel) =>
+    setAlerts(prev =>
+      prev.map(a => a.bookingId === bookingId && a.level === level ? { ...a, dismissed: true } : a),
+    );
+
+  const visibleAlerts = alerts.filter(a => !a.dismissed);
+
+  return { visibleAlerts, dismissAlert };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -174,8 +408,10 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings, defaultBranc
     } else { setAutofilled(false); }
   };
 
-  const handlePhoneChange  = (e: React.ChangeEvent<HTMLInputElement>) => { const val = e.target.value; setForm(f => ({ ...f, phone: val })); setAutofilled(false); lookupCustomer(val, form.vehicleNo); };
-  const handlePlateChange  = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value; setForm(f => ({ ...f, phone: val })); setAutofilled(false); lookupCustomer(val, form.vehicleNo);
+  };
+  const handlePlateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
     if (/ශ/.test(raw)) { setForm(f => ({ ...f, vehicleNo: raw })); setAutofilled(false); return; }
     const { formatted } = formatPlate(raw);
@@ -218,57 +454,34 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings, defaultBranc
     setError(null);
     try {
       const sessionUser = getSessionUser();
-      
-      // ── Find the branch first ──────────────────────────────────────
-      const branchObj = BRANCHES.find(b => b.id === form.branchId);
-      if (!branchObj) {
-        setError('Selected branch not found');
-        setLoading(false);
-        return;
-      }
+      const branchObj   = BRANCHES.find(b => b.id === form.branchId);
+      if (!branchObj) { setError('Selected branch not found'); setLoading(false); return; }
 
       const svcs = SERVICES.filter(s => form.serviceIds.includes(s.id));
-      
-      // ── DON'T generate bookingId on frontend - backend will do it ───
+
       const res = await fetch(`${API_URL}/bookings`, {
-        method:  'POST',
+        method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': sessionUser?.role || 'Cashier',
-          'X-User-Branch': canSeeAllBranches(sessionUser?.role as UserRole) ? '' : (sessionUser?.branch || ''),
+          'Content-Type':   'application/json',
+          'X-User-Role':    sessionUser?.role   || 'Cashier',
+          'X-User-Branch':  canSeeAllBranches(sessionUser?.role as UserRole) ? '' : (sessionUser?.branch || ''),
         },
         body: JSON.stringify({
-          // NO bookingId - backend generates it
-          source:     'manual',
-          branch:     {
-            id:      branchObj.id,
-            name:    branchObj.shortName,
-            address: branchObj.address,
-            phone:   branchObj.phone,
-          },
+          source:   'manual',
+          branch:   { id: branchObj.id, name: branchObj.shortName, address: branchObj.address, phone: branchObj.phone },
           category: form.category,
           services: svcs.map(s => ({ id: s.id, name: s.name, category: s.category })),
           date:     new Date(`${form.date}T12:00:00.000Z`).toISOString(),
           timeSlot: form.timeSlot,
-          customer: {
-            name:      form.name,
-            email:     form.email,
-            phone:     form.phone,
-            vehicleNo: form.vehicleNo.trim().toUpperCase(),
-          },
+          customer: { name: form.name, email: form.email, phone: form.phone, vehicleNo: form.vehicleNo.trim().toUpperCase() },
         }),
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Failed to create booking');
-      
-      console.log('Booking created with ID:', data.booking?.bookingId);
-      
       onSuccess();
       onClose();
     } catch (err: any) {
       setError(err.message || 'Failed to create booking');
-      console.error('Manual booking error:', err);
     } finally {
       setLoading(false);
     }
@@ -361,7 +574,7 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings, defaultBranc
             </div>
           </div>
 
-          {/* Branch — locked if restricted */}
+          {/* Branch */}
           <div>
             <label className="text-sm font-medium text-white block mb-1.5">
               Branch *
@@ -373,8 +586,7 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings, defaultBranc
             </label>
             {lockedBranch ? (
               <div className="w-full px-3 py-2.5 bg-neutral-800/50 border border-[#FFD700]/30 rounded-lg text-[#FFD700] text-sm flex items-center gap-2">
-                <MapPin className="w-4 h-4" />
-                {lockedBranch.name}
+                <MapPin className="w-4 h-4" />{lockedBranch.name}
               </div>
             ) : (
               <select value={form.branchId}
@@ -457,7 +669,7 @@ function ManualBookingModal({ onClose, onSuccess, existingBookings, defaultBranc
   );
 }
 
-// ─── Calendar Modal (unchanged) ───────────────────────────────────────────────
+// ─── Calendar Modal ───────────────────────────────────────────────────────────
 function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: () => void }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
@@ -514,7 +726,7 @@ function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: ()
               {Array.from({ length: firstDay }, (_, i) => <div key={`e-${i}`} />)}
               {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
                 const dayBookings = getBookingsForDay(day);
-                const isSelected = selectedDay === day;
+                const isSelected  = selectedDay === day;
                 return (
                   <button key={day} onClick={() => setSelectedDay(day)}
                     className={`min-h-[60px] md:min-h-[72px] p-1.5 rounded-lg border transition-all text-left ${
@@ -565,7 +777,7 @@ function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: ()
   );
 }
 
-// ─── Booking Detail Modal (unchanged) ──────────────────────────────────────────
+// ─── Booking Detail Modal ─────────────────────────────────────────────────────
 function BookingDetailModal({ booking, onClose, onStatusChange }: {
   booking: Booking;
   onClose: () => void;
@@ -666,7 +878,7 @@ function BookingDetailModal({ booking, onClose, onStatusChange }: {
   );
 }
 
-// ─── Print View (unchanged) ───────────────────────────────���────────────────────
+// ─── Print View ───────────────────────────────────────────────────────────────
 function PrintView({ bookings, onClose }: { bookings: Booking[]; onClose: () => void }) {
   return (
     <div className="fixed inset-0 bg-white z-50 overflow-auto">
@@ -731,17 +943,17 @@ export function BookingsPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [dateFilter, setDateFilter]     = useState<string>('');
 
-  const sessionUser   = getSessionUser();
-  const userRole      = (sessionUser?.role ?? 'Cashier') as UserRole;
-  const userBranch    = sessionUser?.branch ?? '';
-  const fullAccess    = canSeeAllBranches(userRole);
+  const sessionUser = getSessionUser();
+  const userRole    = (sessionUser?.role ?? 'Cashier') as UserRole;
+  const userBranch  = sessionUser?.branch ?? '';
+  const fullAccess  = canSeeAllBranches(userRole);
 
   const [branchFilter, setBranchFilter] = useState<string>(fullAccess ? 'all' : userBranch);
 
-  const [showNewBooking,   setShowNewBooking]   = useState(false);
-  const [showCalendar,     setShowCalendar]     = useState(false);
-  const [showPrint,        setShowPrint]        = useState(false);
-  const [selectedBooking,  setSelectedBooking]  = useState<Booking | null>(null);
+  const [showNewBooking,  setShowNewBooking]  = useState(false);
+  const [showCalendar,    setShowCalendar]    = useState(false);
+  const [showPrint,       setShowPrint]       = useState(false);
+  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
 
   useEffect(() => { fetchBookings(); }, [statusFilter, dateFilter]);
 
@@ -755,11 +967,10 @@ export function BookingsPage() {
 
       const res = await fetch(`${API_URL}/bookings?${params}`, {
         headers: {
-          'X-User-Role': sessionUser?.role || 'Cashier',
+          'X-User-Role':   sessionUser?.role   || 'Cashier',
           'X-User-Branch': fullAccess ? '' : (sessionUser?.branch || ''),
         },
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Failed to fetch bookings');
       setBookings(data.bookings || []);
@@ -772,16 +983,15 @@ export function BookingsPage() {
 
   const handleStatusChange = async (id: string, status: BookingStatus) => {
     try {
-      const res = await fetch(`${API_URL}/bookings/${id}`, {
+      const res = await fetch(`${API_URL}/bookings`, {
         method: 'PATCH',
         headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': sessionUser?.role || 'Cashier',
+          'Content-Type':  'application/json',
+          'X-User-Role':   sessionUser?.role   || 'Cashier',
           'X-User-Branch': fullAccess ? '' : (sessionUser?.branch || ''),
         },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ bookingId: id, status }),  // bookingId in body — Vercel can't sub-route
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || `Server returned ${res.status}`);
       setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b));
@@ -791,16 +1001,26 @@ export function BookingsPage() {
     }
   };
 
-  const branchFiltered = bookings.filter(b => bookingMatchesBranch(b.branch, branchFilter));
+  // ── Late-alert engine ──────────────────────────────────────────────────────
+  const handleAutoCancel = useCallback((bookingId: string) => {
+    setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'Cancelled' } : b));
+  }, []);
 
-  const filtered = branchFiltered.filter(b => {
-    const matchSearch = (
-      b.customer?.toLowerCase().includes(search.toLowerCase()) ||
-      b.id?.toLowerCase().includes(search.toLowerCase()) ||
-      b.vehicle?.toLowerCase().includes(search.toLowerCase())
-    ) ?? true;
-    return matchSearch;
-  });
+  const { visibleAlerts, dismissAlert } = useLateAlerts(bookings, handleAutoCancel);
+
+  // "Mark Arrived" = set to In Progress and dismiss the alert
+  const handleMarkArrived = async (alert: LateAlert) => {
+    await handleStatusChange(alert.bookingId, 'In Progress').catch(() => {});
+    dismissAlert(alert.bookingId, alert.level);
+  };
+
+  // ── Filtering ──────────────────────────────────────────────────────────────
+  const branchFiltered = bookings.filter(b => bookingMatchesBranch(b.branch, branchFilter));
+  const filtered = branchFiltered.filter(b => (
+    b.customer?.toLowerCase().includes(search.toLowerCase()) ||
+    b.id?.toLowerCase().includes(search.toLowerCase()) ||
+    b.vehicle?.toLowerCase().includes(search.toLowerCase())
+  ) ?? true);
 
   const stats = {
     total:      branchFiltered.length,
@@ -813,6 +1033,21 @@ export function BookingsPage() {
   return (
     <>
       <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+
+        {/* ── Late Alert Banners ─────────────────────────────────────────────── */}
+        {visibleAlerts.length > 0 && (
+          <div className="space-y-2">
+            {visibleAlerts.map(alert => (
+              <LateAlertBanner
+                key={`${alert.bookingId}-${alert.level}`}
+                alert={alert}
+                onDismiss={() => dismissAlert(alert.bookingId, alert.level)}
+                onMarkArrived={() => handleMarkArrived(alert)}
+              />
+            ))}
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -918,8 +1153,7 @@ export function BookingsPage() {
                 ))
               ) : (
                 <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border bg-[#FFD700]/10 border-[#FFD700]/30 text-[#FFD700] text-xs font-medium">
-                  <Shield className="w-3 h-3" />
-                  {userBranch}
+                  <Shield className="w-3 h-3" />{userBranch}
                   <span className="ml-1 text-[10px] text-neutral-500 font-normal">(locked to your branch)</span>
                 </span>
               )}
@@ -947,35 +1181,44 @@ export function BookingsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-800">
-                  {filtered.map(booking => (
-                    <tr key={booking.id} className="hover:bg-neutral-800/50 transition-colors cursor-pointer" onClick={() => setSelectedBooking(booking)}>
-                      <td className="px-3 md:px-5 py-3 md:py-4 font-mono font-medium text-white text-xs">{booking.id}</td>
-                      <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-400 text-xs whitespace-nowrap">{booking.date}</td>
-                      <td className="px-3 md:px-5 py-3 md:py-4 text-white font-medium text-sm">{booking.customer}</td>
-                      <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-400 font-mono text-xs">{booking.vehicle || 'N/A'}</td>
-                      <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-300 text-xs max-w-[120px] md:max-w-[150px] truncate">{booking.service}</td>
-                      <td className="px-3 md:px-5 py-3 md:py-4">{statusBadge(booking.status)}</td>
-                      <td className="px-3 md:px-5 py-3 md:py-4 text-right" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1 md:gap-1.5">
-                          <button title="Start" onClick={() => handleStatusChange(booking.id, 'In Progress')}
-                            disabled={booking.status === 'In Progress'}
-                            className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-[#FFD700] hover:bg-neutral-800 transition-colors disabled:opacity-30">
-                            <PlayCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
-                          </button>
-                          <button title="Complete" onClick={() => handleStatusChange(booking.id, 'Completed')}
-                            disabled={booking.status === 'Completed'}
-                            className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-green-400 hover:bg-neutral-800 transition-colors disabled:opacity-30">
-                            <CheckCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
-                          </button>
-                          <button title="Cancel" onClick={() => handleStatusChange(booking.id, 'Cancelled')}
-                            disabled={booking.status === 'Cancelled'}
-                            className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-red-400 hover:bg-neutral-800 transition-colors disabled:opacity-30">
-                            <XCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {filtered.map(booking => {
+                    // Highlight rows that have an active late alert
+                    const hasAlert = visibleAlerts.some(a => a.bookingId === booking.id);
+                    return (
+                      <tr key={booking.id}
+                        className={`hover:bg-neutral-800/50 transition-colors cursor-pointer ${hasAlert ? 'bg-orange-500/5' : ''}`}
+                        onClick={() => setSelectedBooking(booking)}>
+                        <td className="px-3 md:px-5 py-3 md:py-4 font-mono font-medium text-white text-xs">
+                          {hasAlert && <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse mr-1.5 mb-0.5" />}
+                          {booking.id}
+                        </td>
+                        <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-400 text-xs whitespace-nowrap">{booking.date}</td>
+                        <td className="px-3 md:px-5 py-3 md:py-4 text-white font-medium text-sm">{booking.customer}</td>
+                        <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-400 font-mono text-xs">{booking.vehicle || 'N/A'}</td>
+                        <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-300 text-xs max-w-[120px] md:max-w-[150px] truncate">{booking.service}</td>
+                        <td className="px-3 md:px-5 py-3 md:py-4">{statusBadge(booking.status)}</td>
+                        <td className="px-3 md:px-5 py-3 md:py-4 text-right" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-1 md:gap-1.5">
+                            <button title="Start" onClick={() => handleStatusChange(booking.id, 'In Progress')}
+                              disabled={booking.status === 'In Progress'}
+                              className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-[#FFD700] hover:bg-neutral-800 transition-colors disabled:opacity-30">
+                              <PlayCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                            </button>
+                            <button title="Complete" onClick={() => handleStatusChange(booking.id, 'Completed')}
+                              disabled={booking.status === 'Completed'}
+                              className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-green-400 hover:bg-neutral-800 transition-colors disabled:opacity-30">
+                              <CheckCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                            </button>
+                            <button title="Cancel" onClick={() => handleStatusChange(booking.id, 'Cancelled')}
+                              disabled={booking.status === 'Cancelled'}
+                              className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-red-400 hover:bg-neutral-800 transition-colors disabled:opacity-30">
+                              <XCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1006,8 +1249,8 @@ export function BookingsPage() {
           defaultBranch={!fullAccess ? userBranch : undefined}
         />
       )}
-      {showCalendar && <CalendarModal bookings={filtered} onClose={() => setShowCalendar(false)} />}
-      {showPrint && <PrintView bookings={filtered} onClose={() => setShowPrint(false)} />}
+      {showCalendar    && <CalendarModal bookings={filtered} onClose={() => setShowCalendar(false)} />}
+      {showPrint       && <PrintView bookings={filtered} onClose={() => setShowPrint(false)} />}
       {selectedBooking && (
         <BookingDetailModal
           booking={selectedBooking}

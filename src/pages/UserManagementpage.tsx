@@ -1,12 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Plus, Pencil, Trash, User, X, Check, Key, Shield,
-  AlertTriangle, Search, RefreshCw, Loader2, Mail, Download, Copy, Phone, Lock
+  AlertTriangle, Search, RefreshCw, Loader2, Mail, Copy, Phone, Lock
 } from 'lucide-react';
-import {
-  collection, getDocs, doc, setDoc, deleteDoc, updateDoc,
-} from 'firebase/firestore';
-import { db } from '../lib/firebase.ts';
 import emailjs from '@emailjs/browser';
 
 // ─── EmailJS Config ───────────────────────────────────────────────────────────
@@ -37,38 +33,24 @@ async function sendPasswordResetEmail(p: {
 }
 
 // ─── Password-locked PDF Generator ───────────────────────────────────────────
-// PDF is locked with the last 4 digits of the user's mobile number as the password.
-// Uses jsPDF for layout (no native encryption support), then re-encrypts the raw
-// PDF bytes using pdf-lib + the userPassword / ownerPassword API so that Acrobat /
-// any compliant viewer enforces the password before showing the document.
-// NOTE: pdf-lib's PDFDocument.load + save with userPassword requires the
-// "@cantoo/pdf-lib" fork which supports encryption, OR we fall back to a
-// pure-JS RC4 layer. For maximum compatibility we ship the PDF with a
-// visible "password hint" banner so the recipient always knows the unlock key,
-// and we use the pdf-lib encryption API where available, otherwise we alert
-// the admin to share the key manually.
-
 async function downloadLockedCredentialsPDF(p: {
   name: string; username: string; tempPassword: string;
   role: string; branch: string; mobile: string;
 }) {
-  // Last 4 digits of mobile as the unlock password
-  const digits   = (p.mobile ?? '').replace(/\D/g, '');
-  const pdfPass  = digits.length >= 4 ? digits.slice(-4) : digits.padStart(4, '0');
+  const digits  = (p.mobile ?? '').replace(/\D/g, '');
+  const pdfPass = digits.length >= 4 ? digits.slice(-4) : digits.padStart(4, '0');
 
   const { jsPDF } = await import('jspdf');
 
-  const gold  = [255, 215, 0]  as [number,number,number];
-  const dark  = [20,  20,  20] as [number,number,number];
-  const light = [240, 240, 240] as [number,number,number];
+  const gold  = [255, 215, 0]  as [number, number, number];
+  const dark  = [20,  20,  20] as [number, number, number];
+  const light = [240, 240, 240] as [number, number, number];
 
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a5' });
 
-  // Background
   pdf.setFillColor(...dark);
   pdf.rect(0, 0, 148, 210, 'F');
 
-  // Header bar
   pdf.setFillColor(...gold);
   pdf.rect(0, 0, 148, 28, 'F');
   pdf.setTextColor(...dark);
@@ -77,12 +59,11 @@ async function downloadLockedCredentialsPDF(p: {
   pdf.setFontSize(9);
   pdf.text('System Access Credentials — CONFIDENTIAL', 74, 20, { align: 'center' });
 
-  // Lock icon label
   pdf.setFillColor(40, 40, 40);
   pdf.roundedRect(12, 30, 124, 10, 2, 2, 'F');
   pdf.setTextColor(...gold);
   pdf.setFontSize(7.5); pdf.setFont('helvetica', 'bold');
-  pdf.text(`🔒  This PDF is locked — unlock with the last 4 digits of your mobile number`, 74, 36.5, { align: 'center' });
+  pdf.text('🔒  This PDF is locked — unlock with the last 4 digits of your mobile number', 74, 36.5, { align: 'center' });
 
   const field = (label: string, value: string, y: number) => {
     pdf.setTextColor(180, 180, 180); pdf.setFontSize(8); pdf.setFont('helvetica', 'normal');
@@ -99,7 +80,6 @@ async function downloadLockedCredentialsPDF(p: {
   field('Role',               p.role,        104);
   field('Branch Access',      p.branch,      122);
 
-  // Unlock hint box
   pdf.setFillColor(20, 40, 20);
   pdf.roundedRect(12, 136, 124, 18, 3, 3, 'F');
   pdf.setDrawColor(60, 140, 60);
@@ -109,7 +89,6 @@ async function downloadLockedCredentialsPDF(p: {
   pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7);
   pdf.text('Use the last 4 digits of your registered mobile number to open this PDF.', 74, 149, { align: 'center' });
 
-  // Warning box
   pdf.setFillColor(60, 30, 30);
   pdf.roundedRect(12, 158, 124, 28, 3, 3, 'F');
   pdf.setDrawColor(180, 60, 60);
@@ -123,35 +102,27 @@ async function downloadLockedCredentialsPDF(p: {
   pdf.setTextColor(80, 80, 80); pdf.setFontSize(7);
   pdf.text(`Generated: ${new Date().toLocaleString()}  |  Anura Tyres Management System`, 74, 204, { align: 'center' });
 
-  // ── Apply password encryption via pdf-lib ─────────────────────────────────
-  // Get raw PDF bytes from jsPDF
   const rawBytes = pdf.output('arraybuffer');
 
   try {
-    // Dynamically import pdf-lib
     const { PDFDocument } = await import('pdf-lib');
-
     const pdfDoc = await PDFDocument.load(rawBytes);
-
-    // Save with user password (open password) = last 4 digits of mobile
-    // Owner password = random so only Anura admin can change permissions
     const ownerPassword = 'AT-OWNER-' + crypto.randomUUID().slice(0, 8).toUpperCase();
 
     const encryptedBytes = await pdfDoc.save({
       userPassword: pdfPass,
       ownerPassword,
       permissions: {
-        printing:         'highResolution',
-        modifying:        false,
-        copying:          false,
-        annotating:       false,
-        fillingForms:     false,
+        printing:             'highResolution',
+        modifying:            false,
+        copying:              false,
+        annotating:           false,
+        fillingForms:         false,
         contentAccessibility: true,
-        documentAssembly: false,
+        documentAssembly:     false,
       },
     });
 
-    // Trigger download
     const blob = new Blob([encryptedBytes], { type: 'application/pdf' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
@@ -163,8 +134,6 @@ async function downloadLockedCredentialsPDF(p: {
     URL.revokeObjectURL(url);
 
   } catch (encryptErr) {
-    // pdf-lib encryption failed (unlikely) — fall back to unencrypted download
-    // but show the unlock hint in the document itself
     console.warn('PDF encryption failed, downloading without password lock:', encryptErr);
     pdf.save(`${p.username}_credentials.pdf`);
   }
@@ -189,9 +158,7 @@ const ROLE_COLORS: Record<string, string> = {
   'Cashier':     'bg-green-500/20  text-green-400  border-green-500/30',
 };
 
-const generateTempPassword = () => {
-  return 'AT-' + crypto.randomUUID().slice(0, 8).toUpperCase();
-};
+const generateTempPassword = () => 'AT-' + crypto.randomUUID().slice(0, 8).toUpperCase();
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface UserType {
@@ -207,9 +174,7 @@ interface UserType {
   lastLogin?:          string | null;
 }
 
-// ─── Firestore Helpers ────────────────────────────────────────────────────────
-// ── API helpers (replace Firestore helpers) ──────────────────────────────
-
+// ─── API Helpers ──────────────────────────────────────────────────────────────
 async function getAuthToken(): Promise<string> {
   const { getAuth } = await import('firebase/auth');
   const token = await getAuth().currentUser?.getIdToken();
@@ -220,7 +185,7 @@ async function getAuthToken(): Promise<string> {
 async function fetchAllUsers(): Promise<UserType[]> {
   const token = await getAuthToken();
   const res = await fetch('/api/users', {
-    headers: { Authorization: `Bearer ${token}` }
+    headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error('Failed to fetch users');
   return res.json();
@@ -264,7 +229,6 @@ async function resetPassword(username: string, tempPassword: string): Promise<vo
   });
   if (!res.ok) throw new Error((await res.json()).error);
 }
-
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 function Toast({ message, type = 'success', onClose }: {
@@ -371,9 +335,7 @@ function UserFormFields({ user, onChange, isEdit = false }: {
       <div>
         <label className="text-sm font-medium text-white block mb-1.5">
           Email Address *
-          <span className="ml-2 text-xs text-neutral-500 font-normal">
-            (credentials will be sent here)
-          </span>
+          <span className="ml-2 text-xs text-neutral-500 font-normal">(credentials will be sent here)</span>
         </label>
         <div className="relative">
           <Mail className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500 pointer-events-none" />
@@ -519,9 +481,7 @@ function CredentialsModal({ user, tempPassword, emailSent, onClose }: {
 
           {/* Email status */}
           <div className={`flex items-start gap-3 p-3.5 rounded-lg border ${
-            emailSent
-              ? 'bg-green-500/10 border-green-500/30'
-              : 'bg-yellow-500/10 border-yellow-500/30'
+            emailSent ? 'bg-green-500/10 border-green-500/30' : 'bg-yellow-500/10 border-yellow-500/30'
           }`}>
             <Mail className={`w-5 h-5 flex-shrink-0 mt-0.5 ${emailSent ? 'text-green-400' : 'text-yellow-400'}`} />
             <div>
@@ -542,8 +502,8 @@ function CredentialsModal({ user, tempPassword, emailSent, onClose }: {
             <div>
               <p className="text-sm font-medium text-[#FFD700]">PDF is password-locked</p>
               <p className="text-xs text-neutral-400 mt-0.5">
-                The downloaded PDF can only be opened with the last 4 digits of the user's mobile:
-                {' '}<span className="text-white font-mono font-bold tracking-widest">{mobile4}</span>
+                The downloaded PDF can only be opened with the last 4 digits of the user's mobile:{' '}
+                <span className="text-white font-mono font-bold tracking-widest">{mobile4}</span>
               </p>
             </div>
           </div>
@@ -611,17 +571,17 @@ const EMPTY_NEW_USER: UserType = {
 };
 
 export function UserManagement() {
-  const [users, setUsers]               = useState<UserType[]>([]);
-  const [loading, setLoading]           = useState(true);
-  const [saving, setSaving]             = useState(false);
-  const [search, setSearch]             = useState('');
-  const [roleFilter, setRoleFilter]     = useState('all');
-  const [editingUser, setEditingUser]   = useState<UserType | null>(null);
-  const [showAddModal, setShowAddModal] = useState(false);
+  const [users, setUsers]                 = useState<UserType[]>([]);
+  const [loading, setLoading]             = useState(true);
+  const [saving, setSaving]               = useState(false);
+  const [search, setSearch]               = useState('');
+  const [roleFilter, setRoleFilter]       = useState('all');
+  const [editingUser, setEditingUser]     = useState<UserType | null>(null);
+  const [showAddModal, setShowAddModal]   = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [newUser, setNewUser]           = useState<UserType>(EMPTY_NEW_USER);
-  const [toast, setToast]               = useState<{ message: string; type: string } | null>(null);
-  const [credsModal, setCredsModal]     = useState<{
+  const [newUser, setNewUser]             = useState<UserType>(EMPTY_NEW_USER);
+  const [toast, setToast]                 = useState<{ message: string; type: string } | null>(null);
+  const [credsModal, setCredsModal]       = useState<{
     user: UserType; tempPassword: string; emailSent: boolean;
   } | null>(null);
 
@@ -636,7 +596,7 @@ export function UserManagement() {
     try {
       setUsers(await fetchAllUsers());
     } catch (err) {
-      showToast('Failed to load users from Firestore', 'error');
+      showToast('Failed to load users', 'error');
       console.error(err);
     } finally {
       setLoading(false);
@@ -686,37 +646,37 @@ export function UserManagement() {
       setNewUser(EMPTY_NEW_USER);
       setShowAddModal(false);
 
-      // ── Step 1: Send email ──
+      // Step 1: Send email
       let emailSent = false;
       try {
         await sendCredentialsEmail({
-          toName:       user.name,
-          toEmail:      user.email!,
-          username:     user.username,
+          toName:   user.name,
+          toEmail:  user.email!,
+          username: user.username,
           tempPassword,
-          role:         user.role,
-          branch:       user.branch,
+          role:     user.role,
+          branch:   user.branch,
         });
         emailSent = true;
       } catch (emailErr) {
         console.warn('EmailJS not configured or send failed:', emailErr);
       }
 
-      // ── Step 2: Auto-download locked PDF ──
+      // Step 2: Auto-download locked PDF
       try {
         await downloadLockedCredentialsPDF({
-          name:         user.name,
-          username:     user.username,
+          name:     user.name,
+          username: user.username,
           tempPassword,
-          role:         user.role,
-          branch:       user.branch,
-          mobile:       user.mobile ?? '',
+          role:     user.role,
+          branch:   user.branch,
+          mobile:   user.mobile ?? '',
         });
       } catch (pdfErr) {
         console.warn('Auto PDF download failed:', pdfErr);
       }
 
-      // ── Step 3: Show credentials modal ──
+      // Step 3: Show credentials modal
       setCredsModal({ user, tempPassword, emailSent });
 
     } catch (err) {
@@ -785,12 +745,10 @@ export function UserManagement() {
     const tempPassword = generateTempPassword();
     setSaving(true);
     try {
-      await updateDoc(doc(db, USERS_COLLECTION, username), {
-        password:           tempPassword,
-        mustChangePassword: true,
-      });
-
       const target = users.find(u => u.username === username);
+
+      await resetPassword(username, tempPassword);
+
       setUsers(prev => prev.map(u =>
         u.username === username
           ? { ...u, password: tempPassword, mustChangePassword: true }
@@ -812,16 +770,15 @@ export function UserManagement() {
         }
       }
 
-      // Auto-download locked PDF for reset too
       if (target?.mobile) {
         try {
           await downloadLockedCredentialsPDF({
-            name:         target.name,
+            name:     target.name,
             username,
             tempPassword,
-            role:         target.role,
-            branch:       target.branch,
-            mobile:       target.mobile,
+            role:     target.role,
+            branch:   target.branch,
+            mobile:   target.mobile,
           });
         } catch (pdfErr) {
           console.warn('Reset PDF download failed:', pdfErr);
@@ -831,13 +788,7 @@ export function UserManagement() {
       setCredsModal({
         user: target
           ? { ...target, password: tempPassword, mustChangePassword: true }
-          : {
-              username,
-              name: username,
-              role: 'User',
-              branch: 'N/A',
-              password: tempPassword,
-            },
+          : { username, name: username, role: 'User', branch: 'N/A', password: tempPassword },
         tempPassword,
         emailSent,
       });
@@ -875,7 +826,7 @@ export function UserManagement() {
         <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
       )}
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl md:text-3xl font-bold text-white mb-1 flex items-center gap-2">
@@ -905,7 +856,7 @@ export function UserManagement() {
         </div>
       </div>
 
-      {/* ── Stats ── */}
+      {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
         {[
           { label: 'Total Users',  value: stats.total,      color: 'text-white' },
@@ -923,7 +874,7 @@ export function UserManagement() {
         ))}
       </div>
 
-      {/* ── Filters ── */}
+      {/* Filters */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3 md:p-5">
         <div className="flex flex-col md:flex-row gap-3">
           <div className="relative flex-1 max-w-full md:max-w-sm">
@@ -953,7 +904,7 @@ export function UserManagement() {
         </div>
       </div>
 
-      {/* ── Table ── */}
+      {/* Table */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
         {loading ? (
           <div className="py-20 flex flex-col items-center gap-3 text-neutral-500">
@@ -992,12 +943,10 @@ export function UserManagement() {
                   {filteredUsers.map(user => (
                     <tr key={user.username} className="hover:bg-neutral-800/50 transition-colors">
 
-                      {/* Username */}
                       <td className="px-3 md:px-5 py-3 md:py-4 font-mono text-white text-xs md:text-sm whitespace-nowrap">
                         {user.username}
                       </td>
 
-                      {/* Name + Email */}
                       <td className="px-3 md:px-5 py-3 md:py-4">
                         <div className="text-white font-medium text-sm">{user.name}</div>
                         {user.email ? (
@@ -1013,14 +962,12 @@ export function UserManagement() {
                         )}
                       </td>
 
-                      {/* Role */}
                       <td className="px-3 md:px-5 py-3 md:py-4">
                         <span className={`px-2 py-1 rounded-full text-xs font-medium border whitespace-nowrap ${ROLE_COLORS[user.role]}`}>
                           {user.role}
                         </span>
                       </td>
 
-                      {/* Branch */}
                       <td className="px-3 md:px-5 py-3 md:py-4">
                         {ALL_BRANCH_ROLES.includes(user.role) ? (
                           <span className="px-2 py-1 rounded-full text-xs font-medium border bg-neutral-500/20 text-neutral-400 border-neutral-500/30 whitespace-nowrap">
@@ -1033,7 +980,6 @@ export function UserManagement() {
                         )}
                       </td>
 
-                      {/* Status */}
                       <td className="px-3 md:px-5 py-3 md:py-4">
                         {user.mustChangePassword ? (
                           <span className="px-2 py-1 rounded-full text-xs font-medium border bg-orange-500/20 text-orange-400 border-orange-500/30 whitespace-nowrap">
@@ -1046,7 +992,6 @@ export function UserManagement() {
                         )}
                       </td>
 
-                      {/* Actions */}
                       <td className="px-3 md:px-5 py-3 md:py-4 text-right">
                         <div className="flex items-center justify-end gap-1 md:gap-2">
                           <button
@@ -1084,7 +1029,7 @@ export function UserManagement() {
         )}
       </div>
 
-      {/* ── Add User Modal ── */}
+      {/* Add User Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-neutral-900 rounded-xl border border-neutral-700 w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -1131,7 +1076,7 @@ export function UserManagement() {
         </div>
       )}
 
-      {/* ── Edit User Modal ── */}
+      {/* Edit User Modal */}
       {editingUser && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-neutral-900 rounded-xl border border-neutral-700 w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -1169,7 +1114,7 @@ export function UserManagement() {
         </div>
       )}
 
-      {/* ── Credentials Modal ── */}
+      {/* Credentials Modal */}
       {credsModal && (
         <CredentialsModal
           user={credsModal.user}
@@ -1179,7 +1124,7 @@ export function UserManagement() {
         />
       )}
 
-      {/* ── Confirm Delete ── */}
+      {/* Confirm Delete */}
       {confirmDelete && (
         <ConfirmDialog
           message={`Are you sure you want to delete user "${confirmDelete}"? This action cannot be undone.`}
