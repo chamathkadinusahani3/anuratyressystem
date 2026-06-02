@@ -1,1027 +1,255 @@
-// BookingsPage.tsx - COMPLETE FILE  (late-alert edition)
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+// BookingsPage.tsx — main orchestrator
+// Imports every feature from sibling files; this file is only state + wiring.
+
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  Calendar, Plus, ChevronLeft, ChevronRight, X,
-  PlayCircle, CheckCircle, XCircle, Search,
-  RefreshCw, Clock, MapPin, User, Car, Printer, List, Shield,
-  AlertTriangle, BellRing, PhoneCall,
+  Plus, Search, RefreshCw, MapPin, Shield, List,
+  Columns, BarChart2, TrendingUp, Printer, Calendar,
+  Command, Zap, PlayCircle, CheckCircle, XCircle, Wrench, Copy,
+  Star, AlertTriangle, MessageSquare, History,
 } from 'lucide-react';
+
 import { getSessionUser, canSeeAllBranches, bookingMatchesBranch, type UserRole } from '../lib/auth';
 
-const API_URL = (import.meta.env.VITE_API_URL || 'https://anuratyres-backend-emm1774.vercel.app/api').replace(/\/$/, '');
+import {
+  BRANCHES, SERVICES, STATUS_CONFIRM_CONFIG, TAG_STYLE,
+  exportToCSV, resolveBranchName,
+  type Booking, type BookingStatus, type AdvancedFilters, type ConfirmState,
+} from '../components/booking/bookings.types';
 
-// ─── SL Plate helpers ─────────────────────────────────────────────────────────
-const SL_PLATE_PATTERNS: RegExp[] = [
-  /^[A-Z]{2,3}\s[A-Z]{3}-\d{4}$/,
-  /^[A-Z]{2,3}\s[A-Z]{2}-\d{4}$/,
-  /^\d{2}-\d{4}$/,
-  /^\d{1,2}\sශ්‍රී\s\d{4}$/,
-];
-const validateSLPlate = (value: string): boolean => {
-  if (!value.trim()) return true;
-  return SL_PLATE_PATTERNS.some(p => p.test(value.trim()));
+import {
+  useToasts, useAutoRefresh, useCustomerNotes,
+  useLateAlerts, useBulkSelect, useKeyboardShortcuts,
+} from '../components/booking/bookings.hooks';
+
+import {
+  statusBadge, CountdownTimer, ConfirmDialog,
+  ToastContainer, OnlineBadge, BulkActionBar, RowCheckbox,
+} from '../components/booking/bookings.ui';
+
+import {
+  ManualBookingModal, BookingDetailModal, BookingNotesModal,
+  CalendarModal, PrintView,
+} from '../components/booking/bookings.modals';
+
+import {
+  MorningBriefing, LateAlertBanner, TodayTimeline,
+  AnalyticsDashboard, CustomerHistoryPanel, KanbanView,
+  CommandPalette, ShortcutsPanel, AdvancedSearchPanel, ExportDropdown,
+} from '../components/booking/bookings.panels';
+
+const API_URL = (
+  import.meta.env.VITE_API_URL ||
+  'https://anuratyres-backend-emm1774.vercel.app/api'
+).replace(/\/$/, '');
+
+type ViewMode = 'table' | 'kanban';
+
+// ─── Default advanced filters ─────────────────────────────────────────────────
+const DEFAULT_ADV: AdvancedFilters = {
+  dateFrom: '', dateTo: '', category: '', source: '', vehicle: '', hasNotes: false,
 };
-const formatPlate = (raw: string): { formatted: string; maxLength: number } => {
-  if (/ශ/.test(raw)) return { formatted: raw, maxLength: 9 };
-  const up = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (/^\d/.test(up)) {
-    const digits = up.replace(/\D/g, '');
-    const formatted = digits.length > 2 ? `${digits.slice(0, 2)}-${digits.slice(2, 6)}` : digits;
-    return { formatted, maxLength: 7 };
-  }
-  const letters = up.replace(/\d/g, '');
-  const digits  = up.replace(/\D/g, '');
-  if (letters.length <= 2) {
-    const province = letters.slice(0, 2);
-    if (up.length <= 2) return { formatted: province, maxLength: 10 };
-    if (digits.length === 0) return { formatted: province, maxLength: 10 };
-    return { formatted: `${province} ${letters.slice(2)}-${digits.slice(0,4)}`.replace(/\s$/, ''), maxLength: 10 };
-  }
-  const province = letters.slice(0, 2);
-  const series   = letters.slice(2, 5);
-  const is3Letter = letters.length >= 5 || (letters.length === 4 && digits.length > 0);
-  if (series.length === 0) return { formatted: province, maxLength: 11 };
-  const formatted = digits.length > 0 ? `${province} ${series}-${digits.slice(0, 4)}` : `${province} ${series}`;
-  return { formatted, maxLength: is3Letter ? 11 : 10 };
-};
-const PLATE_FORMATS = [
-  { label: 'Modern 3-Letter', example: 'WP CBA-1234' },
-  { label: 'Modern 2-Letter', example: 'WP GA-1234'  },
-  { label: 'Historical',      example: '19-1234'      },
-  { label: 'Sri Series',      example: '15 ශ්‍රී 1234'  },
-];
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-type BookingStatus = 'Pending' | 'In Progress' | 'Completed' | 'Cancelled' | 'Waiting';
-
-interface Booking {
-  id: string;
-  bookingId?: string;
-  date: string;
-  customer: string;
-  vehicle: string;
-  service: string;
-  status: BookingStatus;
-  amount: string;
-  timeSlot?: string;
-  branch?: string;
-  email?: string;
-  phone?: string;
-}
-
-// ─── Late alert state per booking ─────────────────────────────────────────────
-type AlertLevel = 10 | 30;
-interface LateAlert {
-  bookingId:   string;
-  level:       AlertLevel;
-  customer:    string;
-  timeSlot:    string;
-  service:     string;
-  branch:      string;
-  phone?:      string;
-  smsSent:     boolean;
-  dismissed:   boolean;
-  autoCancelled: boolean;
-}
-
-// ─── Data ─────────────────────────────────────────────────────────────────────
-const BRANCHES = [
-  { id: '1', name: 'Pannipitiya Branch', shortName: 'Pannipitiya', address: '278/2 High Level Rd, Pannipitiya',          phone: '077 578 5785',  hasFullService: true,  maxBookingsPerSlot: 3 },
-  { id: '2', name: 'Ratnapura Branch',   shortName: 'Ratnapura',   address: '151 Colombo Rd, Ratnapura',                 phone: '076 688 5885',  hasFullService: false, maxBookingsPerSlot: 2 },
-  { id: '3', name: 'Kalawana Branch',    shortName: 'Kalawana',    address: 'Rathnapura Road, Kalawana',                 phone: '0777 32 95 32', hasFullService: false, maxBookingsPerSlot: 2 },
-  { id: '4', name: 'Nivithigala Branch', shortName: 'Nivithigala', address: 'Tiruwanaketiya-Agalawatte Rd, Nivithigala', phone: '045 227 9396',  hasFullService: false, maxBookingsPerSlot: 2 },
-];
-const SERVICE_CATEGORIES = [
-  { id: 'Anura Tyres', label: 'Anura Tyres', description: 'Tyre fitting, balancing & alignment' },
-  { id: 'Mechanix',    label: 'Mechanix',    description: 'Full mechanical services' },
-  { id: 'Truck & Bus', label: 'Truck & Bus', description: 'Heavy vehicle services' },
-];
-const SERVICES = [
-  { id: 't1', name: 'Wheel Alignment',        category: 'Anura Tyres' },
-  { id: 't2', name: 'Wheel Balancing',         category: 'Anura Tyres' },
-  { id: 't3', name: 'Tyre Change',             category: 'Anura Tyres' },
-  { id: 't4', name: 'Tyre Repair (Puncture)',  category: 'Anura Tyres' },
-  { id: 't5', name: 'Nitrogen Filling',        category: 'Anura Tyres' },
-  { id: 'm1', name: 'Full Service',            category: 'Mechanix' },
-  { id: 'm2', name: 'Oil Change',              category: 'Mechanix' },
-  { id: 'm3', name: 'Battery Check & Replace', category: 'Mechanix' },
-  { id: 'm4', name: 'Brake Service',           category: 'Mechanix' },
-  { id: 'm5', name: 'AC Service',              category: 'Mechanix' },
-  { id: 'b1', name: 'Heavy Vehicle Alignment', category: 'Truck & Bus' },
-  { id: 'b2', name: 'Truck Tyre Change',       category: 'Truck & Bus' },
-  { id: 'b3', name: 'Bus Full Service',        category: 'Truck & Bus' },
-];
-const TIME_SLOTS = [
-  '08:30','09:00','09:30','10:00','10:30','11:00','11:30','12:00',
-  '13:00','13:30','14:00','14:30','15:00','15:30','16:00','16:30',
-  '17:00','17:30','18:00','18:30','19:00',
-];
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function statusBadge(status: BookingStatus) {
-  const map: Record<BookingStatus, string> = {
-    'Pending':     'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
-    'In Progress': 'bg-blue-500/20   text-blue-400   border border-blue-500/30',
-    'Completed':   'bg-green-500/20  text-green-400  border border-green-500/30',
-    'Cancelled':   'bg-red-500/20    text-red-400    border border-red-500/30',
-    'Waiting':     'bg-orange-500/20 text-orange-400 border border-orange-500/30',
-  };
-  return (
-    <span className={`px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${map[status]}`}>
-      {status}
-    </span>
-  );
-}
-
-/** Parse "HH:MM" time slot into today's Date object */
-function slotToDate(dateStr: string, timeSlot: string): Date | null {
-  const [h, m] = timeSlot.split(':').map(Number);
-  if (isNaN(h) || isNaN(m)) return null;
-  // dateStr is YYYY-MM-DD
-  const d = new Date(`${dateStr}T00:00:00`);
-  d.setHours(h, m, 0, 0);
-  return d;
-}
-
-/** Returns how many minutes past the slot time we are (negative = not yet due) */
-function minutesLate(dateStr: string, timeSlot: string): number {
-  const slot = slotToDate(dateStr, timeSlot);
-  if (!slot) return -1;
-  return Math.floor((Date.now() - slot.getTime()) / 60_000);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// LATE ALERT BANNER
-// ═══════════════════════════════════════════════════════════════════════════════
-function LateAlertBanner({
-  alert,
-  onDismiss,
-  onMarkArrived,
-}: {
-  alert: LateAlert;
-  onDismiss: () => void;
-  onMarkArrived: () => void;
-}) {
-  const is30 = alert.level === 30;
-
-  return (
-    <div
-      className={`relative flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 rounded-xl border text-sm
-        ${is30
-          ? 'bg-red-500/10 border-red-500/40 text-red-300'
-          : 'bg-orange-500/10 border-orange-500/40 text-orange-300'
-        }`}
-    >
-      {/* Pulsing dot */}
-      <span className="relative flex-shrink-0 hidden sm:flex h-3 w-3 mt-0.5">
-        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75
-          ${is30 ? 'bg-red-400' : 'bg-orange-400'}`} />
-        <span className={`relative inline-flex rounded-full h-3 w-3
-          ${is30 ? 'bg-red-500' : 'bg-orange-500'}`} />
-      </span>
-
-      {/* Icon */}
-      {is30
-        ? <XCircle   className="w-4 h-4 flex-shrink-0 text-red-400" />
-        : <BellRing  className="w-4 h-4 flex-shrink-0 text-orange-400 animate-bounce" />
-      }
-
-      {/* Message */}
-      <div className="flex-1 min-w-0">
-        {/* Title row */}
-        <div className="font-medium leading-snug">
-          <span className="font-bold">
-            {is30 ? '🚫 Auto-cancelled' : '⏰ Late customer'}
-          </span>
-          <span className="text-neutral-500 mx-1">·</span>
-          <span className="font-semibold">{alert.customer}</span>
-          <span className="text-neutral-400"> — {alert.service}</span>
-        </div>
-        {/* Detail row — each piece on its own, plain spaces between */}
-        <div className="text-xs text-neutral-400 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-          <span className="font-mono">{alert.timeSlot}</span>
-          <span className="text-neutral-600">·</span>
-          <span>{alert.branch}</span>
-          {alert.phone && (
-            <>
-              <span className="text-neutral-600">·</span>
-              <span className="inline-flex items-center gap-1">
-                <PhoneCall className="w-3 h-3 flex-shrink-0" />
-                {alert.phone}
-              </span>
-            </>
-          )}
-        </div>
-        {/* SMS status row */}
-        <div className={`text-xs mt-1 ${alert.smsSent ? 'text-green-500/70' : 'text-red-400/70'}`}>
-          {is30
-            ? alert.smsSent
-              ? '✓ Auto-cancelled · SMS sent to customer.'
-              : '✗ Auto-cancelled · SMS failed — contact customer manually.'
-            : alert.smsSent
-              ? '✓ SMS sent — customer notified.'
-              : '✗ SMS failed — please contact customer manually.'
-          }
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {!is30 && (
-          <button
-            onClick={onMarkArrived}
-            className="px-3 py-1.5 bg-green-500/20 border border-green-500/30 text-green-400 rounded-lg text-xs font-medium hover:bg-green-500/30 transition-colors whitespace-nowrap"
-          >
-            Mark Arrived
-          </button>
-        )}
-        <button
-          onClick={onDismiss}
-          className="p-1.5 text-neutral-500 hover:text-white hover:bg-neutral-700 rounded-lg transition-colors"
-          title="Dismiss"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Resolve the branch display name from whatever string the DB returns.
- * Tries to match against BRANCHES shortName / name, falls back to the raw value.
- */
-function resolveBranchName(raw: string | undefined): string {
-  if (!raw) return 'N/A';
-  const match = BRANCHES.find(
-    b =>
-      b.shortName.toLowerCase() === raw.toLowerCase() ||
-      b.name.toLowerCase() === raw.toLowerCase() ||
-      raw.toLowerCase().includes(b.shortName.toLowerCase()),
-  );
-  return match ? match.shortName : raw;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// LATE ALERT ENGINE HOOK
-// ═══════════════════════════════════════════════════════════════════════════════
-/**
- * Polls every 60 seconds. For each Pending booking today:
- *   +10 min → fires level-10 alert (SMS)
- *   +30 min → fires level-30 alert (SMS + auto-cancel)
- *
- * Tracks fired alerts in a ref so each level fires at most once per booking.
- */
-function useLateAlerts(
-  bookings: Booking[],
-  onAutoCancel: (bookingId: string) => void,
-) {
-  const [alerts, setAlerts]   = useState<LateAlert[]>([]);
-  // fired: Set of "<bookingId>-<level>"
-  const firedRef = useRef<Set<string>>(new Set());
-  const sessionUser = getSessionUser();
-
-  const runCheck = useCallback(async () => {
-    const todayStr = new Date().toISOString().split('T')[0];
-
-    const candidates = bookings.filter(
-      b => b.status === 'Pending' && b.date === todayStr && b.timeSlot,
-    );
-
-    for (const booking of candidates) {
-      const late = minutesLate(booking.date, booking.timeSlot!);
-      if (late < 10) continue; // Not due yet
-
-      const levels: AlertLevel[] = late >= 30 ? [10, 30] : [10];
-
-      for (const level of levels) {
-        const key = `${booking.id}-${level}`;
-        if (firedRef.current.has(key)) continue; // Already fired
-        firedRef.current.add(key);
-
-        // ── Call backend ────────────────────────────────────────────────────
-        let smsSent      = false;
-        let autoCancelled = false;
-        try {
-          const res = await fetch(`${API_URL}/bookings`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-User-Role':   sessionUser?.role   || 'Cashier',
-              'X-User-Branch': sessionUser?.branch || '',
-            },
-            // bookingId in body — Vercel exposes only /api/bookings, not sub-paths
-            body: JSON.stringify({ action: 'late-alert', bookingId: booking.id, minutesLate: level }),
-          });
-          const data = await res.json();
-          smsSent       = data.smsSent      ?? false;
-          autoCancelled = data.autoCancelled ?? false;
-        } catch (err) {
-          console.error('[late-alert] fetch failed:', err);
-        }
-
-        // ── Push alert into UI ──────────────────────────────────────────────
-        const newAlert: LateAlert = {
-          bookingId:   booking.id,
-          level,
-          customer:    booking.customer,
-          timeSlot:    booking.timeSlot!,
-          service:     booking.service,
-          branch:      resolveBranchName(booking.branch),  // ← normalised short name
-          phone:       booking.phone,
-          smsSent,
-          dismissed:   false,
-          autoCancelled,
-        };
-        setAlerts(prev => [...prev, newAlert]);
-
-        // ── Update local booking state if auto-cancelled ────────────────────
-        if (autoCancelled) onAutoCancel(booking.id);
-      }
-    }
-  }, [bookings, sessionUser, onAutoCancel]);
-
-  // Run immediately on mount, then every 60 s
-  useEffect(() => {
-    runCheck();
-    const id = setInterval(runCheck, 60_000);
-    return () => clearInterval(id);
-  }, [runCheck]);
-
-  const dismissAlert = (bookingId: string, level: AlertLevel) =>
-    setAlerts(prev =>
-      prev.map(a => a.bookingId === bookingId && a.level === level ? { ...a, dismissed: true } : a),
-    );
-
-  const visibleAlerts = alerts.filter(a => !a.dismissed);
-
-  return { visibleAlerts, dismissAlert };
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// MANUAL BOOKING FORM MODAL
-// ═══════════════════════════════════════════════════════════════════════════════
-function ManualBookingModal({ onClose, onSuccess, existingBookings, defaultBranch }: {
-  onClose: () => void;
-  onSuccess: () => void;
-  existingBookings: Booking[];
-  defaultBranch?: string;
-}) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState<string | null>(null);
-  const [availableSlots, setAvailableSlots] = useState<string[]>(TIME_SLOTS);
-  const [autofilled, setAutofilled]         = useState(false);
-
-  const lockedBranch = defaultBranch
-    ? BRANCHES.find(b => b.shortName === defaultBranch || b.name === defaultBranch)
-    : null;
-
-  const [form, setForm] = useState({
-    branchId:   lockedBranch?.id ?? '',
-    category:   '',
-    serviceIds: [] as string[],
-    date:       '',
-    timeSlot:   '',
-    name:       '',
-    email:      '',
-    phone:      '',
-    vehicleNo:  '',
-  });
-
-  const branch     = BRANCHES.find(b => b.id === form.branchId);
-  const categories = branch?.hasFullService ? SERVICE_CATEGORIES : SERVICE_CATEGORIES.filter(c => c.id === 'Anura Tyres');
-  const services   = SERVICES.filter(s => s.category === form.category);
-
-  const lookupCustomer = (phone: string, vehicleNo: string) => {
-    const phoneClean   = phone.replace(/\s/g, '');
-    const vehicleClean = vehicleNo.replace(/\s/g, '').toUpperCase();
-    const match = existingBookings.find(b => {
-      if (phoneClean.length >= 7 && b.phone)
-        if (b.phone.replace(/\s/g, '').includes(phoneClean)) return true;
-      if (vehicleClean.length >= 4 && b.vehicle && b.vehicle !== 'N/A')
-        if (b.vehicle.replace(/\s/g, '').toUpperCase() === vehicleClean) return true;
-      return false;
-    });
-    if (match) {
-      setForm(f => ({ ...f, name: match.customer || f.name, email: match.email || f.email, phone: phone || match.phone || f.phone, vehicleNo: vehicleNo || match.vehicle || f.vehicleNo }));
-      setAutofilled(true);
-    } else { setAutofilled(false); }
-  };
-
-  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value; setForm(f => ({ ...f, phone: val })); setAutofilled(false); lookupCustomer(val, form.vehicleNo);
-  };
-  const handlePlateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value;
-    if (/ශ/.test(raw)) { setForm(f => ({ ...f, vehicleNo: raw })); setAutofilled(false); return; }
-    const { formatted } = formatPlate(raw);
-    setForm(f => ({ ...f, vehicleNo: formatted })); setAutofilled(false); lookupCustomer(form.phone, formatted);
-  };
-
-  useEffect(() => {
-    if (form.branchId && form.date) checkSlotAvailability();
-    else setAvailableSlots(TIME_SLOTS);
-  }, [form.branchId, form.date, existingBookings]);
-
-  const checkSlotAvailability = () => {
-    const b = BRANCHES.find(b => b.id === form.branchId);
-    if (!b) return;
-    const dateBookings = existingBookings.filter(
-      bk => (bk.branch === b.shortName || bk.branch === b.name) && bk.date === form.date && bk.status !== 'Cancelled'
-    );
-    const slotCounts = new Map<string, number>();
-    dateBookings.forEach(bk => { if (bk.timeSlot) slotCounts.set(bk.timeSlot, (slotCounts.get(bk.timeSlot) || 0) + 1); });
-    setAvailableSlots(TIME_SLOTS.filter(slot => (slotCounts.get(slot) || 0) < b.maxBookingsPerSlot));
-  };
-
-  const toggle = (id: string) => setForm(f => ({
-    ...f,
-    serviceIds: f.serviceIds.includes(id) ? f.serviceIds.filter(x => x !== id) : [...f.serviceIds, id],
-  }));
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.branchId)               return setError('Please select a branch');
-    if (!form.category)               return setError('Please select a category');
-    if (form.serviceIds.length === 0) return setError('Please select at least one service');
-    if (!form.date)                   return setError('Please select a date');
-    if (!form.timeSlot)               return setError('Please select a time slot');
-    if (!availableSlots.includes(form.timeSlot)) return setError('This time slot is now fully booked.');
-    if (form.vehicleNo && !validateSLPlate(form.vehicleNo))
-      return setError('Vehicle plate format is invalid.');
-
-    setLoading(true);
-    setError(null);
-    try {
-      const sessionUser = getSessionUser();
-      const branchObj   = BRANCHES.find(b => b.id === form.branchId);
-      if (!branchObj) { setError('Selected branch not found'); setLoading(false); return; }
-
-      const svcs = SERVICES.filter(s => form.serviceIds.includes(s.id));
-
-      const res = await fetch(`${API_URL}/bookings`, {
-        method: 'POST',
-        headers: {
-          'Content-Type':   'application/json',
-          'X-User-Role':    sessionUser?.role   || 'Cashier',
-          'X-User-Branch':  canSeeAllBranches(sessionUser?.role as UserRole) ? '' : (sessionUser?.branch || ''),
-        },
-        body: JSON.stringify({
-          source:   'manual',
-          branch:   { id: branchObj.id, name: branchObj.shortName, address: branchObj.address, phone: branchObj.phone },
-          category: form.category,
-          services: svcs.map(s => ({ id: s.id, name: s.name, category: s.category })),
-          date:     new Date(`${form.date}T12:00:00.000Z`).toISOString(),
-          timeSlot: form.timeSlot,
-          customer: { name: form.name, email: form.email, phone: form.phone, vehicleNo: form.vehicleNo.trim().toUpperCase() },
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to create booking');
-      onSuccess();
-      onClose();
-    } catch (err: any) {
-      setError(err.message || 'Failed to create booking');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const availableBranches = lockedBranch ? [lockedBranch] : BRANCHES;
-
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-neutral-900 rounded-xl border border-neutral-700 w-full max-w-2xl my-8 shadow-2xl">
-        <div className="sticky top-0 bg-neutral-900 border-b border-neutral-700 px-4 md:px-6 py-4 flex justify-between items-center z-10 rounded-t-xl">
-          <h2 className="text-lg md:text-xl font-bold text-white">Create New Booking</h2>
-          <button onClick={onClose} className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <form onSubmit={submit} className="p-4 md:p-6 space-y-5">
-          {error && <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">{error}</div>}
-
-          {/* Customer Identification */}
-          <div className="border border-neutral-700 rounded-xl p-4 space-y-3 bg-neutral-800/40">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <User className="w-4 h-4 text-[#FFD700]" />
-              Identify Customer
-              <span className="text-[11px] font-normal text-neutral-500 ml-1">— enter phone or vehicle to auto-fill</span>
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium text-neutral-400 block mb-1.5">Phone *</label>
-                <input type="tel" value={form.phone} onChange={handlePhoneChange} placeholder="077 123 4567"
-                  className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors placeholder:text-neutral-600" required />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-neutral-400 block mb-1.5 flex items-center justify-between">
-                  <span>Vehicle No <span className="text-neutral-600 font-normal">(Optional)</span></span>
-                  {form.vehicleNo && (
-                    <span className={`text-[11px] font-mono ${validateSLPlate(form.vehicleNo) ? 'text-green-400' : 'text-red-400'}`}>
-                      {validateSLPlate(form.vehicleNo) ? '✓ Valid' : '✗ Invalid'}
-                    </span>
-                  )}
-                </label>
-                <div className="relative">
-                  <Car className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-600 pointer-events-none" />
-                  <input value={form.vehicleNo} onChange={handlePlateChange} placeholder="e.g. WP CBA-1234"
-                    maxLength={formatPlate(form.vehicleNo || '').maxLength} autoComplete="off"
-                    style={{ textTransform: /ශ/.test(form.vehicleNo || '') ? 'none' : 'uppercase' }}
-                    className={`w-full pl-10 pr-10 py-2.5 bg-neutral-800 border rounded-lg text-white text-sm font-mono focus:outline-none transition-colors placeholder:text-neutral-600
-                      ${form.vehicleNo ? validateSLPlate(form.vehicleNo) ? 'border-green-500/50 focus:border-green-400' : 'border-red-500/50 focus:border-red-400' : 'border-neutral-700 focus:border-[#FFD700]'}`} />
-                  {form.vehicleNo && (
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
-                      {validateSLPlate(form.vehicleNo) ? <CheckCircle className="w-4 h-4 text-green-400" /> : <AlertTriangle className="w-4 h-4 text-red-400" />}
-                    </div>
-                  )}
-                </div>
-                <div className="grid grid-cols-4 gap-1 mt-1.5">
-                  {PLATE_FORMATS.map(fmt => (
-                    <button key={fmt.example} type="button"
-                      onClick={() => { setForm(f => ({...f, vehicleNo: fmt.example})); lookupCustomer(form.phone, fmt.example); }}
-                      className={`text-left px-2 py-1.5 rounded-lg border transition-all group ${form.vehicleNo === fmt.example ? 'border-[#FFD700]/60 bg-[#FFD700]/5' : 'border-white/[0.08] hover:border-white/20 bg-white/[0.02]'}`}>
-                      <span className="block text-[9px] text-neutral-600 group-hover:text-neutral-500 uppercase tracking-wider mb-0.5">{fmt.label}</span>
-                      <span className="block text-[10px] font-mono text-neutral-400 group-hover:text-neutral-300">{fmt.example}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            {autofilled && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-green-500/10 border border-green-500/30 rounded-lg">
-                <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0" />
-                <span className="text-xs text-green-400">Returning customer found — details auto-filled.</span>
-              </div>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-              <div>
-                <label className="text-xs font-medium text-neutral-400 block mb-1.5">Full Name *</label>
-                <input value={form.name}
-                  onChange={e => { setForm(f => ({...f, name: e.target.value.toUpperCase()})); setAutofilled(false); }}
-                  placeholder="E.G. NIMAL PERERA" style={{ textTransform: 'uppercase' }}
-                  className={`w-full px-3 py-2.5 bg-neutral-800 border rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors placeholder:text-neutral-600 ${autofilled ? 'border-green-500/40' : 'border-neutral-700'}`}
-                  required />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-neutral-400 block mb-1.5">Email *</label>
-                <input type="email" value={form.email}
-                  onChange={e => { setForm(f => ({...f, email: e.target.value})); setAutofilled(false); }}
-                  placeholder="email@example.com"
-                  className={`w-full px-3 py-2.5 bg-neutral-800 border rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors placeholder:text-neutral-600 ${autofilled ? 'border-green-500/40' : 'border-neutral-700'}`}
-                  required />
-              </div>
-            </div>
-          </div>
-
-          {/* Branch */}
-          <div>
-            <label className="text-sm font-medium text-white block mb-1.5">
-              Branch *
-              {lockedBranch && (
-                <span className="ml-2 text-xs text-[#FFD700] font-normal flex items-center gap-1 inline-flex">
-                  <Shield className="w-3 h-3" /> locked to your branch
-                </span>
-              )}
-            </label>
-            {lockedBranch ? (
-              <div className="w-full px-3 py-2.5 bg-neutral-800/50 border border-[#FFD700]/30 rounded-lg text-[#FFD700] text-sm flex items-center gap-2">
-                <MapPin className="w-4 h-4" />{lockedBranch.name}
-              </div>
-            ) : (
-              <select value={form.branchId}
-                onChange={e => setForm({...form, branchId: e.target.value, category: '', serviceIds: []})}
-                className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors" required>
-                <option value="">Select a branch...</option>
-                {availableBranches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
-            )}
-          </div>
-
-          {/* Category */}
-          {form.branchId && (
-            <div>
-              <label className="text-sm font-medium text-white block mb-1.5">Category *</label>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {categories.map(c => (
-                  <button key={c.id} type="button"
-                    onClick={() => setForm({...form, category: c.id, serviceIds: []})}
-                    className={`p-3 rounded-lg border text-sm font-medium transition-all ${form.category === c.id ? 'bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]' : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-500'}`}>
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Services */}
-          {form.category && (
-            <div>
-              <label className="text-sm font-medium text-white block mb-1.5">Services * (select one or more)</label>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-60 overflow-y-auto">
-                {services.map(s => (
-                  <label key={s.id} className={`flex items-center gap-2.5 p-3 rounded-lg border cursor-pointer transition-all ${form.serviceIds.includes(s.id) ? 'bg-[#FFD700]/10 border-[#FFD700] text-white' : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-600'}`}>
-                    <input type="checkbox" checked={form.serviceIds.includes(s.id)} onChange={() => toggle(s.id)} className="w-4 h-4 accent-[#FFD700]" />
-                    <span className="text-sm">{s.name}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Date & Time */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium text-white block mb-1.5">Date *</label>
-              <input type="date" value={form.date} min={new Date().toISOString().split('T')[0]}
-                onChange={e => setForm({...form, date: e.target.value, timeSlot: ''})}
-                className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors" required />
-            </div>
-            <div>
-              <label className="text-sm font-medium text-white block mb-1.5">
-                Time Slot *
-                {form.date && availableSlots.length < TIME_SLOTS.length && (
-                  <span className="text-xs text-orange-400 ml-2">({TIME_SLOTS.length - availableSlots.length} slots full)</span>
-                )}
-              </label>
-              <select value={form.timeSlot} onChange={e => setForm({...form, timeSlot: e.target.value})}
-                className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors"
-                required disabled={!form.date || availableSlots.length === 0}>
-                <option value="">Select time...</option>
-                {availableSlots.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <div className="flex flex-col md:flex-row gap-3 pt-2">
-            <button type="button" onClick={onClose} disabled={loading}
-              className="flex-1 px-4 py-2.5 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 transition-colors disabled:opacity-50">
-              Cancel
-            </button>
-            <button type="submit" disabled={loading || (!!form.date && availableSlots.length === 0)}
-              className="flex-1 px-4 py-2.5 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-              {loading ? <><RefreshCw className="w-4 h-4 animate-spin" /> Creating...</> : 'Create Booking'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-// ─── Calendar Modal ───────────────────────────────────────────────────────────
-function CalendarModal({ bookings, onClose }: { bookings: Booking[]; onClose: () => void }) {
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDay, setSelectedDay] = useState<number | null>(null);
-
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstDay = new Date(year, month, 1).getDay();
-
-  const getBookingsForDay = (day: number) => {
-    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    return bookings.filter(b => b.date === dateStr);
-  };
-
-  const selectedBookings = selectedDay ? getBookingsForDay(selectedDay) : [];
-  const today = new Date();
-  const isToday = (day: number) => day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
-
-  const statusDot: Record<BookingStatus, string> = {
-    'Pending': 'bg-yellow-500', 'In Progress': 'bg-blue-500', 'Completed': 'bg-green-500',
-    'Cancelled': 'bg-red-500',  'Waiting': 'bg-orange-500',
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-neutral-900 rounded-xl border border-neutral-700 w-full max-w-5xl my-8 shadow-2xl">
-        <div className="sticky top-0 bg-neutral-900 border-b border-neutral-700 px-4 md:px-6 py-4 flex justify-between items-center rounded-t-xl">
-          <h2 className="text-lg md:text-xl font-bold text-white flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-[#FFD700]" /> Calendar View
-          </h2>
-          <button onClick={onClose} className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="p-4 md:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-neutral-800 rounded-xl border border-neutral-700 p-4 md:p-5">
-            <div className="flex items-center justify-between mb-5">
-              <button onClick={() => setCurrentDate(new Date(year, month - 1, 1))} className="p-2 hover:bg-neutral-700 rounded-lg text-neutral-400 hover:text-white transition-colors">
-                <ChevronLeft className="w-5 h-5" />
-              </button>
-              <h3 className="text-base md:text-lg font-bold text-white">
-                {currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}
-              </h3>
-              <button onClick={() => setCurrentDate(new Date(year, month + 1, 1))} className="p-2 hover:bg-neutral-700 rounded-lg text-neutral-400 hover:text-white transition-colors">
-                <ChevronRight className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="grid grid-cols-7 gap-1 mb-2">
-              {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
-                <div key={d} className="text-center text-xs font-semibold text-neutral-500 py-2">{d}</div>
-              ))}
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: firstDay }, (_, i) => <div key={`e-${i}`} />)}
-              {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
-                const dayBookings = getBookingsForDay(day);
-                const isSelected  = selectedDay === day;
-                return (
-                  <button key={day} onClick={() => setSelectedDay(day)}
-                    className={`min-h-[60px] md:min-h-[72px] p-1.5 rounded-lg border transition-all text-left ${
-                      isSelected ? 'bg-[#FFD700]/10 border-[#FFD700]' :
-                      isToday(day) ? 'border-[#FFD700]/40 bg-neutral-900' :
-                      'border-neutral-700 bg-neutral-900 hover:border-neutral-600'}`}>
-                    <div className={`text-xs font-bold mb-1 ${isToday(day) ? 'text-[#FFD700]' : 'text-white'}`}>{day}</div>
-                    <div className="space-y-0.5">
-                      {dayBookings.slice(0, 3).map((b, i) => (
-                        <div key={i} className="flex items-center gap-1">
-                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot[b.status]}`} />
-                          <span className="text-[10px] text-neutral-400 truncate">{b.timeSlot || b.customer}</span>
-                        </div>
-                      ))}
-                      {dayBookings.length > 3 && <div className="text-[10px] text-neutral-500">+{dayBookings.length - 3} more</div>}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <div className="bg-neutral-800 rounded-xl border border-neutral-700 p-4 md:p-5">
-            <h3 className="font-bold text-white mb-4 text-sm md:text-base">
-              {selectedDay
-                ? new Date(year, month, selectedDay).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
-                : 'Click a date to view bookings'}
-            </h3>
-            {selectedDay && (
-              selectedBookings.length === 0
-                ? <div className="text-neutral-500 text-sm text-center py-8">No bookings on this day</div>
-                : <div className="space-y-3 max-h-[300px] md:max-h-[400px] overflow-y-auto">
-                    {selectedBookings.map(b => (
-                      <div key={b.id} className="p-3 bg-neutral-900 rounded-lg border border-neutral-700">
-                        <div className="flex justify-between items-start mb-2 gap-2">
-                          <span className="text-sm font-semibold text-white">{b.timeSlot || '--:--'}</span>
-                          {statusBadge(b.status)}
-                        </div>
-                        <div className="text-sm text-neutral-300">{b.customer}</div>
-                        <div className="text-xs text-neutral-500 mt-1">{b.service}</div>
-                      </div>
-                    ))}
-                  </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Booking Detail Modal ─────────────────────────────────────────────────────
-function BookingDetailModal({ booking, onClose, onStatusChange }: {
-  booking: Booking;
-  onClose: () => void;
-  onStatusChange: (id: string, status: BookingStatus) => Promise<void>;
-}) {
-  const [loading, setLoading] = useState<BookingStatus | null>(null);
-
-  const changeStatus = async (status: BookingStatus) => {
-    setLoading(status);
-    await onStatusChange(booking.id, status);
-    setLoading(null);
-    onClose();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-      <div className="bg-neutral-900 rounded-xl border border-neutral-700 w-full max-w-lg shadow-2xl">
-        <div className="border-b border-neutral-700 px-4 md:px-6 py-4 flex justify-between items-center">
-          <h2 className="text-lg md:text-xl font-bold text-white">Booking Details</h2>
-          <button onClick={onClose} className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="p-4 md:p-6 space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-base md:text-lg font-bold text-[#FFD700] break-all">{booking.id}</span>
-            {statusBadge(booking.status)}
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="flex items-start gap-2">
-              <User className="w-4 h-4 text-[#FFD700] mt-0.5 flex-shrink-0" />
-              <div className="min-w-0">
-                <div className="text-xs text-neutral-500">Customer</div>
-                <div className="text-sm text-white font-medium break-words">{booking.customer}</div>
-              </div>
-            </div>
-            <div className="flex items-start gap-2">
-              <Car className="w-4 h-4 text-[#FFD700] mt-0.5 flex-shrink-0" />
-              <div className="min-w-0">
-                <div className="text-xs text-neutral-500">Vehicle</div>
-                <div className="text-sm text-white font-mono break-words">{booking.vehicle || 'N/A'}</div>
-              </div>
-            </div>
-            <div className="flex items-start gap-2">
-              <Calendar className="w-4 h-4 text-[#FFD700] mt-0.5 flex-shrink-0" />
-              <div className="min-w-0">
-                <div className="text-xs text-neutral-500">Date</div>
-                <div className="text-sm text-white">{booking.date}</div>
-              </div>
-            </div>
-            <div className="flex items-start gap-2">
-              <Clock className="w-4 h-4 text-[#FFD700] mt-0.5 flex-shrink-0" />
-              <div className="min-w-0">
-                <div className="text-xs text-neutral-500">Time</div>
-                <div className="text-sm text-white">{booking.timeSlot || 'N/A'}</div>
-              </div>
-            </div>
-            <div className="flex items-start gap-2 col-span-1 md:col-span-2">
-              <MapPin className="w-4 h-4 text-[#FFD700] mt-0.5 flex-shrink-0" />
-              <div className="min-w-0">
-                <div className="text-xs text-neutral-500">Service</div>
-                <div className="text-sm text-white break-words">{booking.service}</div>
-              </div>
-            </div>
-            {booking.branch && (
-              <div className="flex items-start gap-2 col-span-1 md:col-span-2">
-                <MapPin className="w-4 h-4 text-[#FFD700] mt-0.5 flex-shrink-0" />
-                <div className="min-w-0">
-                  <div className="text-xs text-neutral-500">Branch</div>
-                  <div className="text-sm text-white break-words">{booking.branch}</div>
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="border-t border-neutral-800 pt-4">
-            <div className="text-xs text-neutral-500 mb-3">Update Status</div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              {([
-                { status: 'In Progress' as BookingStatus, color: 'blue',   icon: <PlayCircle className="w-3 h-3" />,  label: 'In Progress', short: 'Progress' },
-                { status: 'Completed'  as BookingStatus, color: 'green',  icon: <CheckCircle className="w-3 h-3" />, label: 'Completed',   short: 'Done' },
-                { status: 'Cancelled'  as BookingStatus, color: 'red',    icon: <XCircle className="w-3 h-3" />,     label: 'Cancelled',   short: 'Cancel' },
-                { status: 'Waiting'    as BookingStatus, color: 'orange', icon: <List className="w-3 h-3" />,        label: 'Waiting',     short: 'Wait' },
-              ]).map(({ status, color, icon, label, short }) => (
-                <button key={status}
-                  onClick={() => changeStatus(status)}
-                  disabled={booking.status === status || loading !== null}
-                  className={`py-2 px-2 md:px-3 bg-${color}-500/20 border border-${color}-500/30 text-${color}-400 rounded-lg text-xs font-medium hover:bg-${color}-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5`}>
-                  {loading === status ? <RefreshCw className="w-3 h-3 animate-spin" /> : icon}
-                  <span className="hidden sm:inline">{label}</span>
-                  <span className="sm:hidden">{short}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Print View ───────────────────────────────────────────────────────────────
-function PrintView({ bookings, onClose }: { bookings: Booking[]; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 bg-white z-50 overflow-auto">
-      <div className="print:hidden sticky top-0 bg-white border-b border-neutral-300 px-4 md:px-6 py-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-sm">
-        <h2 className="text-lg md:text-xl font-bold text-neutral-900">Print Preview</h2>
-        <div className="flex gap-3">
-          <button onClick={() => window.print()}
-            className="flex items-center gap-2 px-4 py-2 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors">
-            <Printer className="w-4 h-4" /> Print
-          </button>
-          <button onClick={onClose}
-            className="flex items-center gap-2 px-4 py-2 border border-neutral-300 rounded-lg text-neutral-700 text-sm font-medium hover:bg-neutral-100 transition-colors">
-            <X className="w-4 h-4" /> Close
-          </button>
-        </div>
-      </div>
-      <div className="p-4 md:p-8 max-w-7xl mx-auto">
-        <div className="mb-6 md:mb-8 text-center">
-          <h1 className="text-2xl md:text-3xl font-bold text-neutral-900 mb-2">Anura Tyres — Bookings Report</h1>
-          <p className="text-sm md:text-base text-neutral-600">Generated on {new Date().toLocaleString()}</p>
-          <p className="text-sm md:text-base text-neutral-600 mt-1">Total Bookings: {bookings.length}</p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse border border-neutral-300 text-sm">
-            <thead>
-              <tr className="bg-neutral-100">
-                {['ID','Date','Time','Customer','Vehicle','Service','Branch','Status'].map(h => (
-                  <th key={h} className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-left text-xs md:text-sm font-bold text-neutral-900">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {bookings.map((b, idx) => (
-                <tr key={b.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-neutral-50'}>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs font-mono text-neutral-700">{b.id}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-900">{b.date}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-900">{b.timeSlot || 'N/A'}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-medium text-neutral-900">{b.customer}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-mono text-neutral-700">{b.vehicle || 'N/A'}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-700">{b.service}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm text-neutral-700">{b.branch || 'N/A'}</td>
-                  <td className="border border-neutral-300 px-2 md:px-4 py-2 md:py-3 text-xs md:text-sm font-medium text-neutral-900">{b.status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {bookings.length === 0 && <div className="text-center py-8 text-neutral-500">No bookings to display</div>}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// MAIN BOOKINGS PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 export function BookingsPage() {
-  const [bookings, setBookings]         = useState<Booking[]>([]);
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState<string | null>(null);
-  const [search, setSearch]             = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [dateFilter, setDateFilter]     = useState<string>('');
-
-  const sessionUser = getSessionUser();
-  const userRole    = (sessionUser?.role ?? 'Cashier') as UserRole;
-  const userBranch  = sessionUser?.branch ?? '';
+  // ── Auth — read once on mount, stable via ref so callbacks don't re-create ──
+  const sessionUser = getSessionUser();                          // plain object from localStorage
+  const userRole    = (sessionUser?.role   ?? 'Cashier') as UserRole;
+  const userBranch  = sessionUser?.branch  ?? '';
   const fullAccess  = canSeeAllBranches(userRole);
 
-  const [branchFilter, setBranchFilter] = useState<string>(fullAccess ? 'all' : userBranch);
+  // Stable refs so fetch callbacks don't need these in their dep arrays
+  const roleRef   = useRef(sessionUser?.role   || 'Cashier');
+  const branchRef = useRef(sessionUser?.branch || '');
+  const fullRef   = useRef(fullAccess);
 
+  // ── Core data ──────────────────────────────────────────────────────────────
+  const [bookings, setBookings]         = useState<Booking[]>([]);
+  const [loading,  setLoading]          = useState(true);
+  const [error,    setError]            = useState<string | null>(null);
+
+  // ── Filters ────────────────────────────────────────────────────────────────
+  const [search,        setSearch]        = useState('');
+  const [statusFilter,  setStatusFilter]  = useState<string>('all');
+  const [dateFilter,    setDateFilter]    = useState<string>('');
+  const [branchFilter,  setBranchFilter]  = useState<string>(fullAccess ? 'all' : userBranch);
+  const [advFilters,    setAdvFilters]    = useState<AdvancedFilters>(DEFAULT_ADV);
+  const [showAdvSearch, setShowAdvSearch] = useState(false);
+
+  // ── UI mode ────────────────────────────────────────────────────────────────
+  const [viewMode, setViewMode] = useState<ViewMode>('table');
+
+  // ── Modal visibility ───────────────────────────────────────────────────────
   const [showNewBooking,  setShowNewBooking]  = useState(false);
   const [showCalendar,    setShowCalendar]    = useState(false);
   const [showPrint,       setShowPrint]       = useState(false);
+  const [showTimeline,    setShowTimeline]    = useState(false);
+  const [showAnalytics,   setShowAnalytics]   = useState(false);
+  const [showShortcuts,   setShowShortcuts]   = useState(false);
+  const [showPalette,     setShowPalette]     = useState(false);
+  const [showBriefing,    setShowBriefing]    = useState(true);
+
+  // ── Selected items for detail/history/notes/rebook ────────────────────────
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [historyBooking,  setHistoryBooking]  = useState<Booking | null>(null);
+  const [notesBooking,    setNotesBooking]    = useState<Booking | null>(null);
+  const [reBookFrom,      setReBookFrom]      = useState<Booking | null>(null);
 
-  useEffect(() => { fetchBookings(); }, [statusFilter, dateFilter]);
+  // ── Confirm dialog ─────────────────────────────────────────────────────────
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmState | null>(null);
+  const [bulkConfirm,   setBulkConfirm]   = useState<{ status: BookingStatus; count: number } | null>(null);
 
-  const fetchBookings = async () => {
-    setLoading(true);
-    setError(null);
+  // ── Hooks ──────────────────────────────────────────────────────────────────
+  const { toasts, push: pushToast } = useToasts();
+  const customerNotes               = useCustomerNotes();
+  const searchRef                   = useRef<HTMLInputElement>(null);
+
+  // ── Fetch ──────────────────────────────────────────────────────────────────
+  // roleRef/branchRef/fullRef are stable — never add sessionUser or fullAccess
+  // to dep arrays below or every render triggers a fetch (infinite loading loop).
+  const fetchBookings = useCallback(async () => {
+    setLoading(true); setError(null);
     try {
       const params = new URLSearchParams();
       if (statusFilter !== 'all') params.append('status', statusFilter);
-      if (dateFilter) params.append('date', dateFilter);
-
-      const res = await fetch(`${API_URL}/bookings?${params}`, {
+      if (dateFilter)             params.append('date',   dateFilter);
+      const res  = await fetch(`${API_URL}/bookings?${params}`, {
         headers: {
-          'X-User-Role':   sessionUser?.role   || 'Cashier',
-          'X-User-Branch': fullAccess ? '' : (sessionUser?.branch || ''),
+          'X-User-Role':   roleRef.current,
+          'X-User-Branch': fullRef.current ? '' : branchRef.current,
         },
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to fetch bookings');
+      if (!res.ok) throw new Error(data.message || 'Failed to fetch');
       setBookings(data.bookings || []);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+    } catch (err: any) { setError(err.message); }
+    finally { setLoading(false); }
+  }, [statusFilter, dateFilter]); // stable: only re-creates when filters change
 
+  useEffect(() => { fetchBookings(); }, [fetchBookings]);
+
+  // bookingsRef lets silentFetch read current bookings without being in its deps
+  const bookingsRef = useRef<Booking[]>([]);
+  useEffect(() => { bookingsRef.current = bookings; }, [bookings]);
+
+  const silentFetch = useCallback(async () => {
+    try {
+      const params = new URLSearchParams();
+      if (statusFilter !== 'all') params.append('status', statusFilter);
+      if (dateFilter)             params.append('date',   dateFilter);
+      const res  = await fetch(`${API_URL}/bookings?${params}`, {
+        headers: {
+          'X-User-Role':   roleRef.current,
+          'X-User-Branch': fullRef.current ? '' : branchRef.current,
+        },
+      });
+      const data = await res.json();
+      if (!res.ok) return;
+      const incoming: Booking[] = data.bookings || [];
+      const newOnes = incoming.filter(b => !new Set(bookingsRef.current.map(x => x.id)).has(b.id));
+      if (newOnes.length > 0) {
+        pushToast(`${newOnes.length} new booking${newOnes.length > 1 ? 's' : ''} arrived`, 'success');
+        if (Notification.permission === 'granted') {
+          new Notification('Anura Tyres — New Booking', {
+            body: newOnes.map(b => `${b.customer} · ${b.service}`).join('\n'),
+            icon: '/favicon.ico',
+          });
+        }
+      }
+      setBookings(incoming);
+    } catch {}
+  }, [statusFilter, dateFilter, pushToast]); // stable: bookings via ref, no loop
+
+  const { online, lastRefresh } = useAutoRefresh(silentFetch, 30_000);
+
+  // ── Status change ──────────────────────────────────────────────────────────
   const handleStatusChange = async (id: string, status: BookingStatus) => {
     try {
-      const res = await fetch(`${API_URL}/bookings`, {
-        method: 'PATCH',
+      const res  = await fetch(`${API_URL}/bookings`, {
+        method:  'PATCH',
         headers: {
           'Content-Type':  'application/json',
-          'X-User-Role':   sessionUser?.role   || 'Cashier',
-          'X-User-Branch': fullAccess ? '' : (sessionUser?.branch || ''),
+          'X-User-Role':   roleRef.current,
+          'X-User-Branch': fullRef.current ? '' : branchRef.current,
         },
-        body: JSON.stringify({ bookingId: id, status }),  // bookingId in body — Vercel can't sub-route
+        body: JSON.stringify({ bookingId: id, status }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || `Server returned ${res.status}`);
       setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b));
+      pushToast(`Status updated to ${status}`, 'success');
     } catch (err: any) {
-      alert(`Failed to update status: ${err.message}`);
+      pushToast(`Failed: ${err.message}`, 'error');
       throw err;
     }
   };
 
-  // ── Late-alert engine ──────────────────────────────────────────────────────
+  const confirmStatusChange = (id: string, status: BookingStatus) => {
+    const cfg = STATUS_CONFIRM_CONFIG[status];
+    setConfirmDialog({ bookingId: id, status, label: cfg.label, message: cfg.message, btnClass: cfg.btnClass });
+  };
+
+  // ── Bay / notes (local only — backend call optional) ─────────────────────
+  const handleSaveBayNotes = (id: string, bay: string, notes: string) => {
+    setBookings(prev => prev.map(b => b.id === id ? { ...b, bay, notes } : b));
+    pushToast('Bay & notes saved', 'success');
+  };
+
+  // ── Bulk ───────────────────────────────────────────────────────────────────
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const handleBulkStatus = async (status: BookingStatus) => {
+    setBulkLoading(true);
+    await Promise.allSettled(Array.from(bulkSelect.selectedIds).map(id => handleStatusChange(id, status)));
+    bulkSelect.clear();
+    setBulkLoading(false);
+    setBulkConfirm(null);
+  };
+
+  // ── Late alerts ────────────────────────────────────────────────────────────
   const handleAutoCancel = useCallback((bookingId: string) => {
     setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'Cancelled' } : b));
   }, []);
 
-  const { visibleAlerts, dismissAlert } = useLateAlerts(bookings, handleAutoCancel);
+  const { visibleAlerts, dismissAlert } = useLateAlerts(
+    bookings, handleAutoCancel, roleRef.current, branchRef.current,
+  );
 
-  // "Mark Arrived" = set to In Progress and dismiss the alert
-  const handleMarkArrived = async (alert: LateAlert) => {
+  const handleMarkArrived = async (alert: { bookingId: string; level: 10 | 30 }) => {
     await handleStatusChange(alert.bookingId, 'In Progress').catch(() => {});
     dismissAlert(alert.bookingId, alert.level);
   };
 
+  // ── Push notification permission ───────────────────────────────────────────
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
   // ── Filtering ──────────────────────────────────────────────────────────────
   const branchFiltered = bookings.filter(b => bookingMatchesBranch(b.branch, branchFilter));
-  const filtered = branchFiltered.filter(b => (
-    b.customer?.toLowerCase().includes(search.toLowerCase()) ||
-    b.id?.toLowerCase().includes(search.toLowerCase()) ||
-    b.vehicle?.toLowerCase().includes(search.toLowerCase())
-  ) ?? true);
 
+  const filtered = useMemo(() => {
+    const q  = search.toLowerCase();
+    const af = advFilters;
+    return branchFiltered.filter(b => {
+      if (q && !(b.customer?.toLowerCase().includes(q) || b.id?.toLowerCase().includes(q) || b.vehicle?.toLowerCase().includes(q))) return false;
+      if (af.dateFrom && b.date < af.dateFrom)           return false;
+      if (af.dateTo   && b.date > af.dateTo)             return false;
+      if (af.category && !SERVICES.some(s => s.category === af.category && b.service.includes(s.name))) return false;
+      if (af.source   && b.source !== af.source)         return false;
+      if (af.vehicle  && !b.vehicle?.toLowerCase().includes(af.vehicle.toLowerCase())) return false;
+      if (af.hasNotes && !b.notes)                        return false;
+      return true;
+    });
+  }, [branchFiltered, search, advFilters]);
+
+  const hasAdvFilters = Object.entries(advFilters).some(([k,v]) => k !== 'hasNotes' ? !!v : v);
+
+  // ── Bulk select ────────────────────────────────────────────────────────────
+  const bulkSelect = useBulkSelect(filtered.map(b => b.id));
+
+  // ── Stats ──────────────────────────────────────────────────────────────────
   const stats = {
     total:      branchFiltered.length,
     pending:    branchFiltered.filter(b => b.status === 'Pending').length,
@@ -1030,69 +258,100 @@ export function BookingsPage() {
     waiting:    branchFiltered.filter(b => b.status === 'Waiting').length,
   };
 
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
+  // filteredRef lets the export shortcut see the latest filtered list without
+  // adding it to the handlers object deps (which would cause the listener to
+  // re-register on every keystroke).
+  const filteredRef = useRef<Booking[]>([]);
+  useEffect(() => { filteredRef.current = filtered; }, [filtered]);
+
+  useKeyboardShortcuts({
+    onNew:         () => setShowNewBooking(true),
+    onTimeline:    () => setShowTimeline(true),
+    onToggleView:  () => setViewMode(v => v === 'table' ? 'kanban' : 'table'),
+    onRefresh:     () => fetchBookings(),
+    onFocusSearch: () => searchRef.current?.focus(),
+    onPalette:     () => setShowPalette(true),
+    onExport:      () => exportToCSV(filteredRef.current, 'bookings_filtered'),
+    onShortcuts:   () => setShowShortcuts(true),
+    onEscape:      () => { bulkSelect.clear(); setShowPalette(false); setShowShortcuts(false); },
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER
+  // ══════════════════════════════════════════════════════════════════════════
   return (
     <>
       <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
-        {/* ── Late Alert Banners ─────────────────────────────────────────────── */}
+        {/* Late alert banners */}
         {visibleAlerts.length > 0 && (
           <div className="space-y-2">
             {visibleAlerts.map(alert => (
-              <LateAlertBanner
-                key={`${alert.bookingId}-${alert.level}`}
+              <LateAlertBanner key={`${alert.bookingId}-${alert.level}`}
                 alert={alert}
                 onDismiss={() => dismissAlert(alert.bookingId, alert.level)}
-                onMarkArrived={() => handleMarkArrived(alert)}
-              />
+                onMarkArrived={() => handleMarkArrived(alert)} />
             ))}
           </div>
         )}
 
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        {/* Morning briefing */}
+        {showBriefing && bookings.length > 0 && (
+          <MorningBriefing bookings={bookings} onDismiss={() => setShowBriefing(false)} />
+        )}
+
+        {/* Page header */}
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
           <div>
             <h2 className="text-2xl md:text-3xl font-bold text-white mb-1">Bookings Management</h2>
-            <p className="text-neutral-400 text-sm">
-              {fullAccess
-                ? 'View and manage all service appointments across all branches.'
-                : `Viewing bookings for ${userBranch} branch only.`}
-            </p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <p className="text-neutral-400 text-sm">{fullAccess ? 'All branches' : `${userBranch} branch only`}</p>
+              <OnlineBadge online={online} lastRefresh={lastRefresh} />
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2 md:gap-3">
-            <button onClick={() => setShowPrint(true)}
-              className="flex items-center gap-2 px-3 md:px-4 py-2 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors">
-              <Printer className="w-4 h-4" /> <span className="hidden sm:inline">Print</span>
-            </button>
-            <button onClick={() => setShowCalendar(true)}
-              className="flex items-center gap-2 px-3 md:px-4 py-2 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors">
-              <Calendar className="w-4 h-4" /> <span className="hidden sm:inline">Calendar</span>
-            </button>
-            <button onClick={() => setShowNewBooking(true)}
-              className="flex items-center gap-2 px-3 md:px-4 py-2 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors">
-              <Plus className="w-4 h-4" /> New
-            </button>
+
+          {/* Action buttons */}
+          <div className="flex flex-wrap gap-2">
+            {/* Table / Kanban toggle */}
+            <div className="flex items-center bg-neutral-800 border border-neutral-700 rounded-lg p-1">
+              <button onClick={() => setViewMode('table')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${viewMode==='table'?'bg-neutral-700 text-white':'text-neutral-500 hover:text-neutral-300'}`}>
+                <List className="w-3.5 h-3.5"/>Table
+              </button>
+              <button onClick={() => setViewMode('kanban')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${viewMode==='kanban'?'bg-neutral-700 text-white':'text-neutral-500 hover:text-neutral-300'}`}>
+                <Columns className="w-3.5 h-3.5"/>Kanban
+              </button>
+            </div>
+
+            <button onClick={() => setShowTimeline(true)}  className="flex items-center gap-2 px-3 py-2 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors"><BarChart2 className="w-4 h-4"/><span className="hidden sm:inline">Timeline</span></button>
+            <button onClick={() => setShowAnalytics(true)} className="flex items-center gap-2 px-3 py-2 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors"><TrendingUp className="w-4 h-4"/><span className="hidden sm:inline">Analytics</span></button>
+            <button onClick={() => setShowCalendar(true)}  className="flex items-center gap-2 px-3 py-2 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors"><Calendar className="w-4 h-4"/><span className="hidden sm:inline">Calendar</span></button>
+            <button onClick={() => setShowPrint(true)}     className="flex items-center gap-2 px-3 py-2 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors"><Printer className="w-4 h-4"/><span className="hidden sm:inline">Print</span></button>
+            <ExportDropdown bookings={bookings} filtered={filtered} />
+            <button onClick={() => setShowPalette(true)}   title="⌘K" className="flex items-center gap-2 px-3 py-2 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors"><Command className="w-4 h-4"/></button>
+            <button onClick={() => setShowShortcuts(true)} title="?" className="flex items-center gap-2 px-3 py-2 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium hover:bg-neutral-800 hover:text-white transition-colors"><Zap className="w-4 h-4"/></button>
+            <button onClick={() => setShowNewBooking(true)} className="flex items-center gap-2 px-3 md:px-4 py-2 bg-[#FFD700] rounded-lg text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors"><Plus className="w-4 h-4"/>New</button>
           </div>
         </div>
 
         {/* Branch restriction banner */}
         {!fullAccess && (
           <div className="flex items-center gap-2.5 px-4 py-2.5 bg-[#FFD700]/5 border border-[#FFD700]/20 rounded-xl">
-            <Shield className="w-4 h-4 text-[#FFD700] flex-shrink-0" />
-            <p className="text-sm text-neutral-300">
-              You have access to <span className="text-[#FFD700] font-bold">{userBranch}</span> branch bookings only.
-              <span className="text-neutral-500 ml-1 text-xs">({userRole})</span>
-            </p>
+            <Shield className="w-4 h-4 text-[#FFD700] flex-shrink-0"/>
+            <p className="text-sm text-neutral-300">Restricted to <span className="text-[#FFD700] font-bold">{userBranch}</span><span className="text-neutral-500 ml-1 text-xs">({userRole})</span></p>
           </div>
         )}
 
-        {/* Stats */}
+        {/* Stats row */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
           {[
-            { label: 'Total',       value: stats.total,      color: 'text-white' },
-            { label: 'Pending',     value: stats.pending,    color: 'text-yellow-400' },
-            { label: 'In Progress', value: stats.inProgress, color: 'text-blue-400' },
-            { label: 'Completed',   value: stats.completed,  color: 'text-green-400' },
-            { label: 'Waiting',     value: stats.waiting,    color: 'text-orange-400' },
+            { label:'Total',       value: stats.total,      color:'text-white' },
+            { label:'Pending',     value: stats.pending,    color:'text-yellow-400' },
+            { label:'In Progress', value: stats.inProgress, color:'text-blue-400' },
+            { label:'Completed',   value: stats.completed,  color:'text-green-400' },
+            { label:'Waiting',     value: stats.waiting,    color:'text-orange-400' },
           ].map(s => (
             <div key={s.label} className="bg-neutral-900 border border-neutral-800 rounded-xl p-3 md:p-4">
               <div className={`text-xl md:text-2xl font-bold ${s.color}`}>{s.value}</div>
@@ -1101,67 +360,77 @@ export function BookingsPage() {
           ))}
         </div>
 
-        {/* Table Card */}
+        {/* Main table/kanban card */}
         <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
-          {/* Filters */}
+
+          {/* Filter bar */}
           <div className="p-3 md:p-5 border-b border-neutral-800 space-y-3">
             <div className="flex flex-col md:flex-row gap-3">
+              {/* Search */}
               <div className="relative flex-1 max-w-full md:max-w-sm">
-                <Search className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500" />
-                <input value={search} onChange={e => setSearch(e.target.value)}
-                  placeholder="Search customer, ID, vehicle..."
-                  className="w-full pl-9 pr-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600 transition-colors" />
+                <Search className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500"/>
+                <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
+                  placeholder="Search customer, ID, vehicle… (⌘F)"
+                  className="w-full pl-9 pr-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600 transition-colors"/>
               </div>
-              <div className="flex gap-2 items-center">
+              <div className="flex gap-2 items-center flex-wrap">
                 <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)}
-                  className="px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors" />
-                {dateFilter && (
-                  <button onClick={() => setDateFilter('')}
-                    className="px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-white text-xs font-medium transition-colors whitespace-nowrap">
-                    Clear
-                  </button>
-                )}
+                  className="px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700]"/>
+                {dateFilter && <button onClick={() => setDateFilter('')} className="px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-white text-xs transition-colors">Clear</button>}
+                <button onClick={() => setShowAdvSearch(s => !s)}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${showAdvSearch || hasAdvFilters ? 'bg-[#FFD700]/10 border-[#FFD700]/40 text-[#FFD700]' : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white'}`}>
+                  Advanced{hasAdvFilters && <span className="w-1.5 h-1.5 rounded-full bg-[#FFD700]"/>}
+                </button>
               </div>
             </div>
 
+            {/* Advanced filters */}
+            {showAdvSearch && (
+              <AdvancedSearchPanel filters={advFilters} onChange={setAdvFilters}
+                onClear={() => setAdvFilters(DEFAULT_ADV)} onClose={() => setShowAdvSearch(false)} />
+            )}
+
+            {/* Status pills */}
             <div className="flex gap-2 flex-wrap">
               {(['all','Pending','In Progress','Completed','Cancelled','Waiting'] as const).map(s => (
                 <button key={s} onClick={() => setStatusFilter(s)}
-                  className={`px-3 py-1.5 md:py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
-                    statusFilter === s ? 'bg-[#FFD700] text-black' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-white border border-neutral-700'}`}>
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${statusFilter === s ? 'bg-[#FFD700] text-black' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-white border border-neutral-700'}`}>
                   {s === 'all' ? 'All' : s}
                 </button>
               ))}
               <button onClick={fetchBookings} disabled={loading}
-                className="p-1.5 md:p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors">
-                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                className="p-1.5 md:p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors" title="Refresh (R)">
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}/>
               </button>
             </div>
 
-            {/* Branch filter row */}
+            {/* Branch filter */}
             <div className="flex gap-2 flex-wrap items-center">
-              <span className="text-xs text-neutral-500 font-medium flex items-center gap-1 whitespace-nowrap">
-                <MapPin className="w-3 h-3" /> Branch:
-              </span>
+              <span className="text-xs text-neutral-500 font-medium flex items-center gap-1 whitespace-nowrap"><MapPin className="w-3 h-3"/>Branch:</span>
               {fullAccess ? (
                 (['all', ...BRANCHES.map(b => b.shortName)] as const).map(br => (
                   <button key={br} onClick={() => setBranchFilter(br)}
-                    className={`px-3 py-1.5 md:py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
-                      branchFilter === br ? 'bg-[#FFD700] text-black' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-white border border-neutral-700'}`}>
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${branchFilter === br ? 'bg-[#FFD700] text-black' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-white border border-neutral-700'}`}>
                     {br === 'all' ? 'All Branches' : br}
                   </button>
                 ))
               ) : (
                 <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border bg-[#FFD700]/10 border-[#FFD700]/30 text-[#FFD700] text-xs font-medium">
-                  <Shield className="w-3 h-3" />{userBranch}
-                  <span className="ml-1 text-[10px] text-neutral-500 font-normal">(locked to your branch)</span>
+                  <Shield className="w-3 h-3"/>{userBranch}<span className="ml-1 text-[10px] text-neutral-500">(locked)</span>
                 </span>
               )}
             </div>
+
+            {/* Bulk action bar */}
+            <BulkActionBar
+              selectedIds={bulkSelect.selectedIds}
+              onClear={bulkSelect.clear}
+              onBulkStatus={status => setBulkConfirm({ status, count: bulkSelect.selectedIds.size })}
+              loading={bulkLoading} />
           </div>
 
           {error && <div className="p-4 bg-red-500/10 border-b border-red-500/20 text-red-400 text-sm text-center">{error}</div>}
-          {loading && <div className="flex items-center justify-center py-16"><RefreshCw className="w-8 h-8 text-[#FFD700] animate-spin" /></div>}
+          {loading && <div className="flex items-center justify-center py-16"><RefreshCw className="w-8 h-8 text-[#FFD700] animate-spin"/></div>}
 
           {!loading && !error && filtered.length === 0 && (
             <div className="py-16 text-center">
@@ -1170,50 +439,101 @@ export function BookingsPage() {
             </div>
           )}
 
-          {!loading && filtered.length > 0 && (
+          {/* ── TABLE ── */}
+          {!loading && filtered.length > 0 && viewMode === 'table' && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-neutral-950 border-b border-neutral-800">
+                    {/* Select-all checkbox */}
+                    <th className="px-3 md:px-5 py-3.5 w-10">
+                      <RowCheckbox checked={bulkSelect.allSelected} indeterminate={bulkSelect.someSelected} onChange={bulkSelect.toggleAll}/>
+                    </th>
                     {['Booking ID','Date','Customer','Vehicle','Service','Status','Actions'].map(h => (
-                      <th key={h} className={`px-3 md:px-5 py-3 md:py-3.5 font-bold text-[#FFD700] text-left text-xs md:text-sm whitespace-nowrap ${h === 'Actions' ? 'text-right' : ''}`}>{h}</th>
+                      <th key={h} className={`px-3 md:px-5 py-3.5 font-bold text-[#FFD700] text-left text-xs md:text-sm whitespace-nowrap ${h==='Actions'?'text-right':''}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-800">
                   {filtered.map(booking => {
-                    // Highlight rows that have an active late alert
-                    const hasAlert = visibleAlerts.some(a => a.bookingId === booking.id);
+                    const hasAlert   = visibleAlerts.some(a => a.bookingId === booking.id);
+                    const isSelected = bulkSelect.selectedIds.has(booking.id);
+                    const note       = customerNotes.getNote(booking.phone || '');
+                    const hCount     = bookings.filter(b => {
+                      if (b.id === booking.id) return false;
+                      return booking.phone && b.phone &&
+                        b.phone.replace(/\s/g,'') === booking.phone.replace(/\s/g,'');
+                    }).length;
+
                     return (
                       <tr key={booking.id}
-                        className={`hover:bg-neutral-800/50 transition-colors cursor-pointer ${hasAlert ? 'bg-orange-500/5' : ''}`}
+                        className={`hover:bg-neutral-800/50 transition-colors cursor-pointer ${hasAlert?'bg-orange-500/5':''} ${isSelected?'bg-[#FFD700]/5':''}`}
                         onClick={() => setSelectedBooking(booking)}>
+
+                        {/* Checkbox */}
+                        <td className="px-3 md:px-5 py-3 md:py-4">
+                          <RowCheckbox checked={isSelected} onChange={() => bulkSelect.toggle(booking.id)}/>
+                        </td>
+
+                        {/* ID + source */}
                         <td className="px-3 md:px-5 py-3 md:py-4 font-mono font-medium text-white text-xs">
-                          {hasAlert && <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse mr-1.5 mb-0.5" />}
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            {hasAlert && <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse flex-shrink-0"/>}
+                            {booking.source && booking.source !== 'website' && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-500 border border-neutral-700">
+                                {booking.source === 'manual' ? 'Staff' : booking.source === 'rebook' ? 'Rebook' : 'Walk-in'}
+                              </span>
+                            )}
+                          </div>
                           {booking.id}
                         </td>
-                        <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-400 text-xs whitespace-nowrap">{booking.date}</td>
-                        <td className="px-3 md:px-5 py-3 md:py-4 text-white font-medium text-sm">{booking.customer}</td>
-                        <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-400 font-mono text-xs">{booking.vehicle || 'N/A'}</td>
-                        <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-300 text-xs max-w-[120px] md:max-w-[150px] truncate">{booking.service}</td>
+
+                        {/* Date + countdown */}
+                        <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-400 text-xs whitespace-nowrap">
+                          <div>{booking.date}</div>
+                          {booking.timeSlot && (booking.status==='Pending'||booking.status==='In Progress') && (
+                            <CountdownTimer dateStr={booking.date} timeSlot={booking.timeSlot}/>
+                          )}
+                        </td>
+
+                        {/* Customer + history + tag */}
+                        <td className="px-3 md:px-5 py-3 md:py-4 text-white font-medium text-sm">
+                          <div className="flex items-center gap-1.5">
+                            {note?.tag === 'vip'     && <Star className="w-3 h-3 text-yellow-400 flex-shrink-0"/>}
+                            {note?.tag === 'flagged' && <AlertTriangle className="w-3 h-3 text-red-400 flex-shrink-0"/>}
+                            <span>{booking.customer}</span>
+                          </div>
+                          {hCount > 0 && (
+                            <button onClick={e => { e.stopPropagation(); setHistoryBooking(booking); }}
+                              className="flex items-center gap-1 text-[11px] text-[#FFD700]/70 hover:text-[#FFD700] mt-0.5">
+                              <History className="w-3 h-3"/>{hCount} past
+                            </button>
+                          )}
+                        </td>
+
+                        {/* Vehicle */}
+                        <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-400 font-mono text-xs">{booking.vehicle||'N/A'}</td>
+
+                        {/* Service + bay + notes indicator */}
+                        <td className="px-3 md:px-5 py-3 md:py-4 text-neutral-300 text-xs max-w-[120px] md:max-w-[150px]">
+                          <div className="truncate">{booking.service}</div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            {booking.bay   && <span className="text-[11px] text-blue-400 flex items-center gap-0.5"><Wrench className="w-3 h-3"/>{booking.bay}</span>}
+                            {booking.notes && <MessageSquare className="w-3 h-3 text-[#FFD700]"/>}
+                          </div>
+                        </td>
+
+                        {/* Status */}
                         <td className="px-3 md:px-5 py-3 md:py-4">{statusBadge(booking.status)}</td>
+
+                        {/* Actions */}
                         <td className="px-3 md:px-5 py-3 md:py-4 text-right" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-end gap-1 md:gap-1.5">
-                            <button title="Start" onClick={() => handleStatusChange(booking.id, 'In Progress')}
-                              disabled={booking.status === 'In Progress'}
-                              className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-[#FFD700] hover:bg-neutral-800 transition-colors disabled:opacity-30">
-                              <PlayCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
-                            </button>
-                            <button title="Complete" onClick={() => handleStatusChange(booking.id, 'Completed')}
-                              disabled={booking.status === 'Completed'}
-                              className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-green-400 hover:bg-neutral-800 transition-colors disabled:opacity-30">
-                              <CheckCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
-                            </button>
-                            <button title="Cancel" onClick={() => handleStatusChange(booking.id, 'Cancelled')}
-                              disabled={booking.status === 'Cancelled'}
-                              className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-red-400 hover:bg-neutral-800 transition-colors disabled:opacity-30">
-                              <XCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
-                            </button>
+                            <button title="Start"    onClick={() => confirmStatusChange(booking.id,'In Progress')} disabled={booking.status==='In Progress'} className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-[#FFD700] hover:bg-neutral-800 transition-colors disabled:opacity-30"><PlayCircle className="w-3.5 h-3.5 md:w-4 md:h-4"/></button>
+                            <button title="Complete" onClick={() => confirmStatusChange(booking.id,'Completed')}   disabled={booking.status==='Completed'}   className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-green-400 hover:bg-neutral-800 transition-colors disabled:opacity-30"><CheckCircle className="w-3.5 h-3.5 md:w-4 md:h-4"/></button>
+                            <button title="Cancel"   onClick={() => confirmStatusChange(booking.id,'Cancelled')}   disabled={booking.status==='Cancelled'}   className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-red-400 hover:bg-neutral-800 transition-colors disabled:opacity-30"><XCircle className="w-3.5 h-3.5 md:w-4 md:h-4"/></button>
+                            <button title="Bay & Notes" onClick={() => setNotesBooking(booking)} className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-blue-400 hover:bg-neutral-800 transition-colors"><Wrench className="w-3.5 h-3.5 md:w-4 md:h-4"/></button>
+                            <button title="Re-book"  onClick={() => setReBookFrom(booking)}      className="p-1 md:p-1.5 rounded text-neutral-500 hover:text-purple-400 hover:bg-neutral-800 transition-colors"><Copy className="w-3.5 h-3.5 md:w-4 md:h-4"/></button>
                           </div>
                         </td>
                       </tr>
@@ -1224,43 +544,107 @@ export function BookingsPage() {
             </div>
           )}
 
+          {/* ── KANBAN ── */}
+          {!loading && viewMode === 'kanban' && (
+            <div className="p-4 md:p-5">
+              <KanbanView
+                bookings={filtered}
+                onStatusChange={handleStatusChange}
+                onBookingClick={setSelectedBooking}
+                customerNotes={customerNotes} />
+            </div>
+          )}
+
+          {/* Footer */}
           {!loading && filtered.length > 0 && (
             <div className="px-3 md:px-5 py-3 border-t border-neutral-800 text-xs text-neutral-500 flex items-center justify-between gap-2 flex-wrap">
               <span>
                 Showing {filtered.length} of {branchFiltered.length} bookings
-                {!fullAccess && <span className="text-[#FFD700] ml-1">· {userBranch}</span>}
+                {!fullAccess              && <span className="text-[#FFD700] ml-1">· {userBranch}</span>}
                 {fullAccess && branchFilter !== 'all' && <span className="text-[#FFD700] ml-1">· {branchFilter}</span>}
+                {bulkSelect.selectedIds.size > 0 && <span className="text-[#FFD700] ml-2">· {bulkSelect.selectedIds.size} selected</span>}
+                {hasAdvFilters && <span className="text-orange-400 ml-2">· filtered</span>}
               </span>
-              {!fullAccess && (
-                <span className="flex items-center gap-1 text-neutral-600">
-                  <Shield className="w-3 h-3" /> Restricted to {userBranch}
-                </span>
-              )}
+              <span className="text-[11px] text-neutral-700">
+                Press <kbd className="px-1 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-[10px]">?</kbd> for shortcuts
+              </span>
             </div>
           )}
         </div>
       </div>
 
+      {/* ── Modals ─────────────────────────────────────────────────────────── */}
       {showNewBooking && (
         <ManualBookingModal
-          onClose={() => setShowNewBooking(false)}
-          onSuccess={fetchBookings}
-          existingBookings={bookings}
-          defaultBranch={!fullAccess ? userBranch : undefined}
-        />
+          onClose={() => setShowNewBooking(false)} onSuccess={fetchBookings}
+          existingBookings={bookings} defaultBranch={!fullAccess ? userBranch : undefined} />
       )}
-      {showCalendar    && <CalendarModal bookings={filtered} onClose={() => setShowCalendar(false)} />}
-      {showPrint       && <PrintView bookings={filtered} onClose={() => setShowPrint(false)} />}
+      {reBookFrom && (
+        <ManualBookingModal
+          onClose={() => setReBookFrom(null)} onSuccess={fetchBookings}
+          existingBookings={bookings} defaultBranch={!fullAccess ? userBranch : undefined}
+          reBookFrom={reBookFrom} />
+      )}
+      {showCalendar  && <CalendarModal bookings={filtered} onClose={() => setShowCalendar(false)} />}
+      {showPrint     && <PrintView     bookings={filtered} onClose={() => setShowPrint(false)} />}
+      {showTimeline  && <TodayTimeline bookings={bookings} onClose={() => setShowTimeline(false)} />}
+      {showAnalytics && <AnalyticsDashboard bookings={bookings} onClose={() => setShowAnalytics(false)} />}
+      {showShortcuts && <ShortcutsPanel onClose={() => setShowShortcuts(false)} />}
+      {showPalette   && (
+        <CommandPalette bookings={bookings} onClose={() => setShowPalette(false)}
+          onBookingSelect={b => setSelectedBooking(b)}
+          onAction={action => {
+            if (action === 'new')      setShowNewBooking(true);
+            if (action === 'timeline') setShowTimeline(true);
+            if (action === 'export')   exportToCSV(filtered, 'bookings_filtered');
+            if (action === 'refresh')  fetchBookings();
+            if (action === 'kanban')   setViewMode(v => v === 'table' ? 'kanban' : 'table');
+          }} />
+      )}
+      {historyBooking && (
+        <CustomerHistoryPanel
+          booking={historyBooking} allBookings={bookings}
+          onClose={() => setHistoryBooking(null)}
+          notes={customerNotes}
+          onSaveNote={(phone, text, tag) => customerNotes.upsert(phone, text, tag)} />
+      )}
+      {notesBooking && (
+        <BookingNotesModal booking={notesBooking} onClose={() => setNotesBooking(null)} onSave={handleSaveBayNotes} />
+      )}
       {selectedBooking && (
         <BookingDetailModal
-          booking={selectedBooking}
+          booking={selectedBooking} allBookings={bookings}
           onClose={() => setSelectedBooking(null)}
-          onStatusChange={async (id, status) => {
-            await handleStatusChange(id, status);
-            setSelectedBooking(null);
-          }}
-        />
+          onStatusChange={async (id, status) => { setSelectedBooking(null); confirmStatusChange(id, status); }}
+          onViewHistory={b => setHistoryBooking(b)}
+          onEditNotes={b => { setSelectedBooking(null); setNotesBooking(b); }}
+          customerNotes={customerNotes} />
       )}
+
+      {confirmDialog && (
+        <ConfirmDialog
+          title={`Confirm: ${confirmDialog.label}`}
+          message={confirmDialog.message}
+          confirmLabel={confirmDialog.label}
+          confirmClass={confirmDialog.btnClass}
+          onCancel={() => setConfirmDialog(null)}
+          onConfirm={async () => {
+            const { bookingId, status } = confirmDialog;
+            setConfirmDialog(null);
+            await handleStatusChange(bookingId, status).catch(() => {});
+          }} />
+      )}
+      {bulkConfirm && (
+        <ConfirmDialog
+          title={`Bulk Update — ${bulkConfirm.count} bookings`}
+          message={`Set all ${bulkConfirm.count} selected booking(s) to "${bulkConfirm.status}"?`}
+          confirmLabel={`Update ${bulkConfirm.count} bookings`}
+          confirmClass={STATUS_CONFIRM_CONFIG[bulkConfirm.status].btnClass}
+          onCancel={() => setBulkConfirm(null)}
+          onConfirm={() => handleBulkStatus(bulkConfirm.status)} />
+      )}
+
+      <ToastContainer toasts={toasts} />
     </>
   );
 }

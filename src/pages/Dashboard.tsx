@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Sidebar } from '../components/layout/Sidebar';
 import { StatsCards } from '../components/dashboard/StatsCards';
 import { StaffAssignment } from '../components/dashboard/StaffAssignment';
 import {
-  Bell, Search, User, X, PlayCircle, CheckCircle, XCircle,
-  AlertTriangle, Package, Calendar, LogOut, Menu, Shield
+  Bell, Search, X, PlayCircle, CheckCircle, XCircle,
+  LogOut, Menu, Shield
 } from 'lucide-react';
 import { SettingsPage } from './SettingsPage';
 import UserManagement from './UserManagementpage';
@@ -16,8 +16,11 @@ import { CustomersPage } from './CustomersPage';
 import { JobManagementPage } from './JobManagementPage';
 import { canAccessTab, getAllowedTabs, getSessionUser, roleBadgeClass, type UserRole } from '../lib/auth';
 
+// ─── API constant (single source of truth) ────────────────────────────────────
+// VITE_API_URL must include the /api prefix, e.g. https://your-backend.com/api
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
 type BookingStatus = 'Pending' | 'In Progress' | 'Completed' | 'Cancelled';
 
 interface Booking {
@@ -29,6 +32,7 @@ interface Booking {
   status: BookingStatus;
   amount: string;
   timeSlot?: string;
+  branch?: string;
 }
 
 interface Notification {
@@ -36,8 +40,8 @@ interface Notification {
   type: 'error' | 'warning' | 'info' | 'success';
   title: string;
   message: string;
-  time: string;
   read: boolean;
+  createdAt: string;
 }
 
 interface DashboardProps {
@@ -45,54 +49,229 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-// ─── Notifications Panel ──────────────────────────────────────────────────────
-const INITIAL_NOTIFICATIONS: Notification[] = [
-  { id: '1', type: 'error',   title: 'Low Stock Warning',  message: 'Michelin 205/55R16 running low — only 4 left.',           time: '2 min ago',  read: false },
-  { id: '2', type: 'warning', title: 'Pending Approvals',  message: '3 new large fleet bookings require manager approval.',     time: '15 min ago', read: false },
-  { id: '3', type: 'info',    title: 'New Booking',        message: 'Nimal Perera booked Wheel Alignment for tomorrow 10:00.', time: '1 hr ago',   read: false },
-  { id: '4', type: 'success', title: 'Service Completed',  message: 'BK-7828 marked as completed by Saman Perera.',            time: '2 hr ago',   read: true  },
-];
+// ─── Relative time ─────────────────────────────────────────────────────────────
+function timeAgo(iso: string): string {
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60)    return 'just now';
+  if (secs < 3600)  return `${Math.floor(secs / 60)} min ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)} hr ago`;
+  return `${Math.floor(secs / 86400)} day${Math.floor(secs / 86400) > 1 ? 's' : ''} ago`;
+}
 
-function NotificationsPanel({ onClose }: { onClose: () => void }) {
-  const [notifications, setNotifications] = useState<Notification[]>(INITIAL_NOTIFICATIONS);
-  const dotColor = { error: 'bg-red-500', warning: 'bg-yellow-500', info: 'bg-blue-500', success: 'bg-green-500' };
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTIFICATIONS PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+function NotificationsPanel({
+  branch,
+  onClose,
+  onUnreadChange,
+}: {
+  branch: string;
+  onClose: () => void;
+  onUnreadChange?: (count: number) => void;
+}) {
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [fetchError,    setFetchError]    = useState<string | null>(null);
+
+  const fetchNotifications = useCallback(async () => {
+    if (!branch) {
+      setLoading(false);
+      setFetchError('No branch configured — check your session.');
+      return;
+    }
+
+    // FIX: use API_URL directly (already contains /api prefix)
+    // Adjust the path below to match your actual backend route.
+    // Common options:
+    //   ${API_URL}/notifications?branch=...
+    //   ${API_URL}/staff?resource=notifications&branch=...
+    const url = `${API_URL}/notifications?branch=${encodeURIComponent(branch)}`;
+
+    try {
+      setFetchError(null);
+      const res = await fetch(url);
+
+      if (!res.ok) {
+        const text = await res.text();
+        setFetchError(`Server error ${res.status}: ${text.slice(0, 200)}`);
+        return;
+      }
+
+      const data = await res.json();
+
+      if (Array.isArray(data)) {
+        setNotifications(data);
+        onUnreadChange?.(data.filter((n: Notification) => !n.read).length);
+      } else if (data && Array.isArray(data.notifications)) {
+        // Handle wrapped response: { notifications: [...] }
+        setNotifications(data.notifications);
+        onUnreadChange?.(data.notifications.filter((n: Notification) => !n.read).length);
+      } else {
+        setFetchError(`Unexpected response shape. Check ${url}`);
+      }
+    } catch (err: any) {
+      console.error('[Notifications] fetch failed:', err);
+      setFetchError(err.message || 'Network error — is the backend running?');
+    } finally {
+      setLoading(false);
+    }
+  }, [branch, onUnreadChange]);
+
+  // Initial load + 30-second poll
+  useEffect(() => {
+    fetchNotifications();
+    const id = setInterval(fetchNotifications, 30_000);
+    return () => clearInterval(id);
+  }, [fetchNotifications]);
+
+  const markRead = async (id: string) => {
+    const updated = notifications.map(n => n.id === id ? { ...n, read: true } : n);
+    setNotifications(updated);
+    onUnreadChange?.(updated.filter(n => !n.read).length);
+    try {
+      await fetch(`${API_URL}/notifications/${id}/read`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err) {
+      console.warn('[Notifications] markRead failed:', err);
+    }
+  };
+
+  const markAllRead = async () => {
+    const updated = notifications.map(n => ({ ...n, read: true }));
+    setNotifications(updated);
+    onUnreadChange?.(0);
+    try {
+      await fetch(`${API_URL}/notifications/mark-all-read`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branch }),
+      });
+    } catch (err) {
+      console.warn('[Notifications] markAllRead failed:', err);
+    }
+  };
+
+  const deleteNotif = async (id: string) => {
+    const updated = notifications.filter(n => n.id !== id);
+    setNotifications(updated);
+    onUnreadChange?.(updated.filter(n => !n.read).length);
+    try {
+      await fetch(`${API_URL}/notifications/${id}`, { method: 'DELETE' });
+    } catch (err) {
+      console.warn('[Notifications] delete failed:', err);
+    }
+  };
+
+  const dotColor: Record<Notification['type'], string> = {
+    error:   'bg-red-500',
+    warning: 'bg-yellow-500',
+    info:    'bg-blue-500',
+    success: 'bg-green-500',
+  };
+
+  const unreadCount = notifications.filter(n => !n.read).length;
 
   return (
     <div className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+
+      {/* Header */}
       <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
-        <span className="text-white font-bold text-sm">Notifications</span>
-        <button onClick={() => setNotifications(n => n.map(x => ({ ...x, read: true })))}
-          className="text-xs text-[#FFD700] hover:underline transition-colors">Mark all read</button>
+        <div className="flex items-center gap-2">
+          <span className="text-white font-bold text-sm">Notifications</span>
+          <span className="text-neutral-600 text-[10px] font-mono">{branch}</span>
+          {unreadCount > 0 && (
+            <span className="px-1.5 py-0.5 bg-[#FFD700] text-black rounded-full text-[10px] font-bold leading-none">
+              {unreadCount}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          {unreadCount > 0 && (
+            <button onClick={markAllRead} className="text-xs text-[#FFD700] hover:underline">
+              Mark all read
+            </button>
+          )}
+          <button
+            onClick={fetchNotifications}
+            className="text-neutral-500 hover:text-white"
+            title="Refresh"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M1 4v6h6" />
+              <path d="M23 20v-6h-6" />
+              <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15" />
+            </svg>
+          </button>
+        </div>
       </div>
+
+      {/* Body */}
       <div className="max-h-80 overflow-y-auto divide-y divide-neutral-800/50">
-        {notifications.length === 0 ? (
-          <div className="p-6 text-center text-neutral-500 text-sm">All caught up! 🎉</div>
-        ) : notifications.map(n => (
-          <div key={n.id}
-            onClick={() => setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read: true } : x))}
-            className={`px-4 py-3 flex items-start gap-3 cursor-pointer transition-colors ${n.read ? 'opacity-50' : 'hover:bg-neutral-800'}`}>
-            <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${dotColor[n.type]}`} />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-white">{n.title}</p>
-              <p className="text-xs text-neutral-500 mt-0.5 leading-relaxed">{n.message}</p>
-              <p className="text-xs text-neutral-600 mt-1">{n.time}</p>
-            </div>
-            <button onClick={e => { e.stopPropagation(); setNotifications(prev => prev.filter(x => x.id !== n.id)); }}
-              className="text-neutral-600 hover:text-white transition-colors flex-shrink-0 mt-0.5">
-              <X className="w-3.5 h-3.5" />
+        {loading ? (
+          <div className="flex items-center justify-center py-10 gap-2 text-neutral-500 text-sm">
+            <div className="w-4 h-4 border-2 border-neutral-700 border-t-[#FFD700] rounded-full animate-spin" />
+            Loading…
+          </div>
+        ) : fetchError ? (
+          <div className="p-4 space-y-2">
+            <p className="text-red-400 text-xs font-semibold">Failed to load notifications</p>
+            <p className="text-neutral-500 text-xs break-all">{fetchError}</p>
+            <button
+              onClick={fetchNotifications}
+              className="mt-1 px-3 py-1.5 bg-neutral-800 border border-neutral-700 rounded-lg text-xs text-white hover:bg-neutral-700"
+            >
+              Retry
             </button>
           </div>
-        ))}
+        ) : notifications.length === 0 ? (
+          <div className="p-6 text-center text-neutral-500 text-sm">All caught up! 🎉</div>
+        ) : (
+          notifications.map(n => (
+            <div
+              key={n.id}
+              onClick={() => !n.read && markRead(n.id)}
+              className={`px-4 py-3 flex items-start gap-3 transition-colors ${
+                n.read ? 'opacity-50' : 'hover:bg-neutral-800 cursor-pointer'
+              }`}
+            >
+              <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${dotColor[n.type]}`} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-white">{n.title}</p>
+                <p className="text-xs text-neutral-500 mt-0.5 leading-relaxed">{n.message}</p>
+                <p className="text-xs text-neutral-600 mt-1">{timeAgo(n.createdAt)}</p>
+              </div>
+              <button
+                onClick={e => { e.stopPropagation(); deleteNotif(n.id); }}
+                className="text-neutral-600 hover:text-white transition-colors flex-shrink-0 mt-0.5"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))
+        )}
       </div>
+
+      {/* Footer */}
       <div className="px-4 py-2 border-t border-neutral-800">
-        <button onClick={onClose} className="w-full text-xs text-neutral-500 hover:text-white transition-colors py-1">Close</button>
+        <button onClick={onClose} className="w-full text-xs text-neutral-500 hover:text-white py-1">
+          Close
+        </button>
       </div>
     </div>
   );
 }
 
 // ─── Global Search ─────────────────────────────────────────────────────────────
-function GlobalSearch({ onNavigate, allowedTabs }: { onNavigate: (tab: string) => void; allowedTabs: string[] }) {
+function GlobalSearch({
+  onNavigate,
+  allowedTabs,
+}: {
+  onNavigate: (tab: string) => void;
+  allowedTabs: string[];
+}) {
   const [query,   setQuery]   = useState('');
   const [results, setResults] = useState<Booking[]>([]);
   const [open,    setOpen]    = useState(false);
@@ -113,11 +292,16 @@ function GlobalSearch({ onNavigate, allowedTabs }: { onNavigate: (tab: string) =
     const t = setTimeout(async () => {
       try {
         const res  = await fetch(`${API_URL}/bookings?search=${encodeURIComponent(query)}&limit=5`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        setResults(data.bookings || []);
+        setResults(data.bookings || data || []);
         setOpen(true);
-      } catch { setResults([]); }
-      finally { setLoading(false); }
+      } catch (err) {
+        console.error('[GlobalSearch] fetch failed:', err);
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
     }, 300);
     return () => clearTimeout(t);
   }, [query]);
@@ -127,13 +311,16 @@ function GlobalSearch({ onNavigate, allowedTabs }: { onNavigate: (tab: string) =
   return (
     <div ref={ref} className="relative w-full md:w-auto">
       <Search className="absolute left-3 top-2.5 h-4 w-4 text-neutral-500" />
-      <input type="text" value={query} onChange={e => setQuery(e.target.value)}
+      <input
+        type="text"
+        value={query}
+        onChange={e => setQuery(e.target.value)}
         onFocus={() => results.length > 0 && setOpen(true)}
         placeholder="Global Search..."
         className="bg-neutral-900 border border-neutral-800 rounded-full pl-9 pr-9 py-1.5 text-sm text-white focus:outline-none focus:border-[#FFD700] w-full md:w-64 transition-all placeholder:text-neutral-600"
       />
       {query && (
-        <button onClick={clear} className="absolute right-3 top-2.5 text-neutral-500 hover:text-white transition-colors">
+        <button onClick={clear} className="absolute right-3 top-2.5 text-neutral-500 hover:text-white">
           <X className="w-3.5 h-3.5" />
         </button>
       )}
@@ -149,10 +336,13 @@ function GlobalSearch({ onNavigate, allowedTabs }: { onNavigate: (tab: string) =
                 {results.length} result{results.length !== 1 ? 's' : ''} found
               </div>
               {results.map(b => (
-                <button key={b.id} onClick={() => {
-                  if (allowedTabs.includes('bookings')) { onNavigate('bookings'); clear(); }
-                }}
-                  className="w-full px-4 py-3 hover:bg-neutral-800 transition-colors text-left border-b border-neutral-800/50 last:border-0">
+                <button
+                  key={b.id}
+                  onClick={() => {
+                    if (allowedTabs.includes('bookings')) { onNavigate('bookings'); clear(); }
+                  }}
+                  className="w-full px-4 py-3 hover:bg-neutral-800 transition-colors text-left border-b border-neutral-800/50 last:border-0"
+                >
                   <div className="flex justify-between items-center">
                     <span className="text-white text-sm font-medium">{b.customer}</span>
                     <span className="text-[10px] font-mono text-neutral-500">{b.id}</span>
@@ -161,8 +351,10 @@ function GlobalSearch({ onNavigate, allowedTabs }: { onNavigate: (tab: string) =
                 </button>
               ))}
               {allowedTabs.includes('bookings') && (
-                <button onClick={() => { onNavigate('bookings'); clear(); }}
-                  className="w-full px-4 py-2.5 text-xs text-[#FFD700] hover:bg-neutral-800 transition-colors font-medium text-center">
+                <button
+                  onClick={() => { onNavigate('bookings'); clear(); }}
+                  className="w-full px-4 py-2.5 text-xs text-[#FFD700] hover:bg-neutral-800 font-medium text-center"
+                >
                   See all results in Bookings →
                 </button>
               )}
@@ -175,40 +367,72 @@ function GlobalSearch({ onNavigate, allowedTabs }: { onNavigate: (tab: string) =
 }
 
 // ─── Recent Bookings Table ─────────────────────────────────────────────────────
-function RecentBookingsTable({ onViewAll, canViewAll }: { onViewAll: () => void; canViewAll: boolean }) {
+function RecentBookingsTable({
+  onViewAll,
+  canViewAll,
+}: {
+  onViewAll: () => void;
+  canViewAll: boolean;
+}) {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading,  setLoading]  = useState(true);
-
-  const session = getSessionUser();
+  const [error,    setError]    = useState<string | null>(null);
 
   useEffect(() => {
+    // FIX: read session inside the effect so it's always fresh
+    const session = getSessionUser();
+
     fetch(`${API_URL}/bookings?limit=8`)
-      .then(r => r.json())
+      .then(async res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
       .then(d => {
-        let bks = d.bookings || [];
-        // Branch-filter for non-admin roles
+        let bks: Booking[] = d.bookings || d || [];
+        // Filter by branch for non-admin roles
         if (session && !['Super Admin', 'Admin'].includes(session.role) && session.branch) {
-          bks = bks.filter((b: any) =>
+          bks = bks.filter(b =>
             !b.branch ||
             b.branch === session.branch ||
             b.branch?.toLowerCase().includes(session.branch.toLowerCase())
           );
         }
         setBookings(bks);
+        setError(null);
       })
-      .catch(() => setBookings([]))
+      .catch(err => {
+        console.error('[RecentBookings] fetch failed:', err);
+        setError(err.message || 'Failed to load bookings');
+      })
       .finally(() => setLoading(false));
   }, []);
 
   const changeStatus = async (id: string, status: BookingStatus) => {
+    // Optimistic update
+    setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b));
     try {
-      await fetch(`${API_URL}/bookings/${id}`, {
+      const res = await fetch(`${API_URL}/bookings/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
-      setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b));
-    } catch { alert('Failed to update status'); }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      console.error('[RecentBookings] status update failed:', err);
+      // Revert optimistic update on failure
+      alert('Failed to update status. Please try again.');
+      const session = getSessionUser();
+      fetch(`${API_URL}/bookings?limit=8`)
+        .then(r => r.json())
+        .then(d => {
+          let bks: Booking[] = d.bookings || d || [];
+          if (session && !['Super Admin', 'Admin'].includes(session.role) && session.branch) {
+            bks = bks.filter(b => !b.branch || b.branch === session.branch);
+          }
+          setBookings(bks);
+        })
+        .catch(() => {});
+    }
   };
 
   const statusStyle: Record<BookingStatus, string> = {
@@ -223,7 +447,9 @@ function RecentBookingsTable({ onViewAll, canViewAll }: { onViewAll: () => void;
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-white font-bold text-base md:text-lg">Recent Bookings</h3>
         {canViewAll && (
-          <button onClick={onViewAll} className="text-xs text-[#FFD700] hover:underline transition-colors">View all →</button>
+          <button onClick={onViewAll} className="text-xs text-[#FFD700] hover:underline">
+            View all →
+          </button>
         )}
       </div>
       <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden flex-1">
@@ -231,11 +457,18 @@ function RecentBookingsTable({ onViewAll, canViewAll }: { onViewAll: () => void;
           <div className="flex items-center justify-center h-48">
             <div className="w-8 h-8 border-2 border-[#FFD700] border-t-transparent rounded-full animate-spin" />
           </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center h-48 gap-2 px-6 text-center">
+            <p className="text-red-400 text-sm font-medium">Failed to load bookings</p>
+            <p className="text-neutral-600 text-xs break-all">{error}</p>
+          </div>
         ) : bookings.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 gap-2">
             <p className="text-neutral-500 text-sm">No bookings yet.</p>
             {canViewAll && (
-              <button onClick={onViewAll} className="text-[#FFD700] text-xs hover:underline">Create one in Bookings →</button>
+              <button onClick={onViewAll} className="text-[#FFD700] text-xs hover:underline">
+                Create one in Bookings →
+              </button>
             )}
           </div>
         ) : (
@@ -244,7 +477,12 @@ function RecentBookingsTable({ onViewAll, canViewAll }: { onViewAll: () => void;
               <thead>
                 <tr className="bg-neutral-950 border-b border-neutral-800">
                   {['Booking ID', 'Customer', 'Service', 'Date', 'Status', 'Actions'].map(h => (
-                    <th key={h} className={`px-3 md:px-4 py-3 text-xs font-bold text-[#FFD700] text-left whitespace-nowrap ${h === 'Actions' ? 'text-right' : ''}`}>{h}</th>
+                    <th
+                      key={h}
+                      className={`px-3 md:px-4 py-3 text-xs font-bold text-[#FFD700] text-left whitespace-nowrap ${h === 'Actions' ? 'text-right' : ''}`}
+                    >
+                      {h}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -256,20 +494,34 @@ function RecentBookingsTable({ onViewAll, canViewAll }: { onViewAll: () => void;
                     <td className="px-3 md:px-4 py-3 text-neutral-400 text-xs max-w-[140px] truncate">{b.service}</td>
                     <td className="px-3 md:px-4 py-3 text-neutral-500 text-xs whitespace-nowrap">{b.date}</td>
                     <td className="px-3 md:px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${statusStyle[b.status]}`}>{b.status}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${statusStyle[b.status]}`}>
+                        {b.status}
+                      </span>
                     </td>
                     <td className="px-3 md:px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <button title="Start" onClick={() => changeStatus(b.id, 'In Progress')} disabled={b.status === 'In Progress'}
-                          className="p-1 text-neutral-600 hover:text-[#FFD700] transition-colors disabled:opacity-20 disabled:cursor-not-allowed">
+                        <button
+                          title="Start"
+                          onClick={() => changeStatus(b.id, 'In Progress')}
+                          disabled={b.status === 'In Progress'}
+                          className="p-1 text-neutral-600 hover:text-[#FFD700] disabled:opacity-20 disabled:cursor-not-allowed"
+                        >
                           <PlayCircle className="w-3.5 h-3.5" />
                         </button>
-                        <button title="Complete" onClick={() => changeStatus(b.id, 'Completed')} disabled={b.status === 'Completed'}
-                          className="p-1 text-neutral-600 hover:text-green-400 transition-colors disabled:opacity-20 disabled:cursor-not-allowed">
+                        <button
+                          title="Complete"
+                          onClick={() => changeStatus(b.id, 'Completed')}
+                          disabled={b.status === 'Completed'}
+                          className="p-1 text-neutral-600 hover:text-green-400 disabled:opacity-20 disabled:cursor-not-allowed"
+                        >
                           <CheckCircle className="w-3.5 h-3.5" />
                         </button>
-                        <button title="Cancel" onClick={() => changeStatus(b.id, 'Cancelled')} disabled={b.status === 'Cancelled'}
-                          className="p-1 text-neutral-600 hover:text-red-400 transition-colors disabled:opacity-20 disabled:cursor-not-allowed">
+                        <button
+                          title="Cancel"
+                          onClick={() => changeStatus(b.id, 'Cancelled')}
+                          disabled={b.status === 'Cancelled'}
+                          className="p-1 text-neutral-600 hover:text-red-400 disabled:opacity-20 disabled:cursor-not-allowed"
+                        >
                           <XCircle className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -286,9 +538,15 @@ function RecentBookingsTable({ onViewAll, canViewAll }: { onViewAll: () => void;
 }
 
 // ─── User Menu ─────────────────────────────────────────────────────────────────
-function UserMenu({ user, onLogout }: { user: DashboardProps['user']; onLogout: () => void }) {
+function UserMenu({
+  user,
+  onLogout,
+}: {
+  user: DashboardProps['user'];
+  onLogout: () => void;
+}) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const ref     = useRef<HTMLDivElement>(null);
   const session = getSessionUser();
 
   useEffect(() => {
@@ -314,11 +572,10 @@ function UserMenu({ user, onLogout }: { user: DashboardProps['user']; onLogout: 
       </div>
       <button
         onClick={() => setOpen(v => !v)}
-        className="flex items-center justify-center h-8 w-8 md:h-9 md:w-9 rounded-full bg-[#FFD700] text-black font-black hover:bg-[#FFD700]/90 transition-colors"
+        className="flex items-center justify-center h-8 w-8 md:h-9 md:w-9 rounded-full bg-[#FFD700] text-black font-black hover:bg-[#FFD700]/90"
       >
         <span className="font-black text-sm">{user.name.charAt(0).toUpperCase()}</span>
       </button>
-
       {open && (
         <div className="absolute right-0 top-full mt-2 w-56 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl z-50 overflow-hidden">
           <div className="px-4 py-3 border-b border-neutral-800">
@@ -330,18 +587,16 @@ function UserMenu({ user, onLogout }: { user: DashboardProps['user']; onLogout: 
             </div>
             {session && !['Super Admin', 'Admin'].includes(user.role) && (
               <p className="text-xs text-neutral-500 mt-1.5 flex items-center gap-1">
-                <Shield className="w-3 h-3" />
-                {session.branch} branch only
+                <Shield className="w-3 h-3" /> {session.branch} branch only
               </p>
             )}
             <p className="text-xs text-neutral-600 mt-0.5 font-mono">@{user.username}</p>
           </div>
           <button
             onClick={() => { setOpen(false); onLogout(); }}
-            className="w-full px-4 py-3 flex items-center gap-3 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+            className="w-full px-4 py-3 flex items-center gap-3 text-sm text-red-400 hover:bg-red-500/10"
           >
-            <LogOut className="w-4 h-4" />
-            Sign Out
+            <LogOut className="w-4 h-4" /> Sign Out
           </button>
         </div>
       )}
@@ -349,7 +604,7 @@ function UserMenu({ user, onLogout }: { user: DashboardProps['user']; onLogout: 
   );
 }
 
-// ─── Access Denied Screen ─────────────────────────────────────────────────────
+// ─── Access Denied ─────────────────────────────────────────────────────────────
 function AccessDenied({ tab }: { tab: string }) {
   return (
     <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
@@ -373,49 +628,51 @@ function AccessDenied({ tab }: { tab: string }) {
 export function Dashboard({ user, onLogout }: DashboardProps) {
   const [activeTab,         setActiveTab]         = useState('dashboard');
   const [showNotifications, setShowNotifications] = useState(false);
-  const [unreadCount,       setUnreadCount]       = useState(3);
+  const [unreadCount,       setUnreadCount]       = useState(0);
   const [mobileMenuOpen,    setMobileMenuOpen]    = useState(false);
   const [mobileSearchOpen,  setMobileSearchOpen]  = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
 
   const role        = user.role as UserRole;
   const allowedTabs = getAllowedTabs(role);
+  const session     = getSessionUser();
 
-  // Ensure we never land on a forbidden tab
+  // FIX: derive notifBranch from session at render time;
+  // for Admin/Super Admin who have no branch, fall back to 'Pannipitiya'
+  // (or remove the fallback and handle it in your backend)
+  const notifBranch = session?.branch || 'Pannipitiya';
+
   const safeSetTab = (tab: string) => {
-    if (canAccessTab(role, tab)) {
-      setActiveTab(tab);
-    }
+    if (canAccessTab(role, tab)) setActiveTab(tab);
   };
 
+  // Close notifications panel on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node))
         setShowNotifications(false);
-      }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Close mobile menu when tab changes
   useEffect(() => { setMobileMenuOpen(false); }, [activeTab]);
 
+  // Lock body scroll when mobile menu open
   useEffect(() => {
-    if (mobileMenuOpen) document.body.style.overflow = 'hidden';
-    else                document.body.style.overflow = 'unset';
+    document.body.style.overflow = mobileMenuOpen ? 'hidden' : 'unset';
     return () => { document.body.style.overflow = 'unset'; };
   }, [mobileMenuOpen]);
 
   const dashboardHome = (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-      {/* Branch restriction banner for non-admin roles */}
       {!['Super Admin', 'Admin'].includes(role) && (
         <div className="mb-4 flex items-center gap-2.5 px-4 py-2.5 bg-[#FFD700]/5 border border-[#FFD700]/20 rounded-xl">
           <Shield className="w-4 h-4 text-[#FFD700] flex-shrink-0" />
           <p className="text-sm text-neutral-300">
             You are viewing data for{' '}
-            <span className="text-[#FFD700] font-bold">{getSessionUser()?.branch}</span>{' '}
-            branch only.
+            <span className="text-[#FFD700] font-bold">{session?.branch}</span> branch only.
             {role === 'Cashier' && (
               <span className="text-neutral-500 ml-1">(Cashier access)</span>
             )}
@@ -430,10 +687,14 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
         <p className="text-sm md:text-base text-neutral-400">
           Here's what's happening at Anura Tyres today —{' '}
           <span className="hidden sm:inline">
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            {new Date().toLocaleDateString('en-US', {
+              weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+            })}
           </span>
           <span className="sm:hidden">
-            {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+            {new Date().toLocaleDateString('en-US', {
+              month: 'short', day: 'numeric', year: 'numeric',
+            })}
           </span>
         </p>
       </div>
@@ -447,7 +708,6 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
             canViewAll={canAccessTab(role, 'bookings')}
           />
         </div>
-        {/* Only show staff widget if user can see staff */}
         {canAccessTab(role, 'staff') && (
           <div className="lg:col-span-1 space-y-6 md:space-y-8">
             <StaffAssignment />
@@ -458,11 +718,9 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
   );
 
   const renderContent = () => {
-    // If accessing a tab they're not allowed, show Access Denied
     if (activeTab !== 'dashboard' && !canAccessTab(role, activeTab)) {
       return <AccessDenied tab={activeTab} />;
     }
-
     switch (activeTab) {
       case 'dashboard':       return dashboardHome;
       case 'bookings':        return <BookingsPage />;
@@ -479,15 +737,19 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
 
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-[#FFD700] selection:text-black">
-      {/* Desktop Sidebar — pass allowedTabs so it only renders allowed items */}
+
+      {/* Desktop sidebar */}
       <div className="hidden lg:block">
         <Sidebar activeTab={activeTab} setActiveTab={safeSetTab} allowedTabs={allowedTabs} />
       </div>
 
-      {/* Mobile Sidebar Overlay */}
+      {/* Mobile sidebar overlay */}
       {mobileMenuOpen && (
         <>
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden" onClick={() => setMobileMenuOpen(false)} />
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
+            onClick={() => setMobileMenuOpen(false)}
+          />
           <div className="fixed inset-y-0 left-0 w-64 z-50 lg:hidden">
             <Sidebar activeTab={activeTab} setActiveTab={safeSetTab} allowedTabs={allowedTabs} />
           </div>
@@ -495,52 +757,86 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
       )}
 
       <main className="lg:pl-64 min-h-screen">
+
+        {/* Top header */}
         <header className="h-14 md:h-16 border-b border-neutral-800 flex items-center justify-between px-3 md:px-8 sticky top-0 bg-black/80 backdrop-blur-md z-40">
+
+          {/* Left: hamburger + breadcrumb */}
           <div className="flex items-center gap-3">
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="lg:hidden text-neutral-400 hover:text-[#FFD700] transition-colors p-2"
+              className="lg:hidden text-neutral-400 hover:text-[#FFD700] p-2"
             >
               {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
             </button>
             <div className="hidden md:flex items-center text-neutral-400 text-sm">
-              <span onClick={() => setActiveTab('dashboard')} className="hover:text-white cursor-pointer transition-colors">Admin</span>
+              <span
+                onClick={() => setActiveTab('dashboard')}
+                className="hover:text-white cursor-pointer"
+              >
+                Admin
+              </span>
               <span className="mx-2 text-neutral-700">/</span>
               <span className="text-[#FFD700] font-medium capitalize">{activeTab}</span>
             </div>
             <div className="md:hidden text-[#FFD700] font-bold text-sm capitalize">{activeTab}</div>
           </div>
 
+          {/* Right: search + bell + user */}
           <div className="flex items-center gap-2 md:gap-6">
-            <button onClick={() => setMobileSearchOpen(!mobileSearchOpen)} className="md:hidden text-neutral-400 hover:text-[#FFD700] transition-colors p-2">
+            {/* Mobile search toggle */}
+            <button
+              onClick={() => setMobileSearchOpen(!mobileSearchOpen)}
+              className="md:hidden text-neutral-400 hover:text-[#FFD700] p-2"
+            >
               <Search className="h-5 w-5" />
             </button>
+
+            {/* Desktop search */}
             <div className="hidden md:block">
               <GlobalSearch onNavigate={safeSetTab} allowedTabs={allowedTabs} />
             </div>
+
+            {/* Notifications bell */}
             <div ref={notifRef} className="relative">
-              <button onClick={() => { setShowNotifications(v => !v); setUnreadCount(0); }}
-                className="relative text-neutral-400 hover:text-[#FFD700] transition-colors p-2">
+              <button
+                onClick={() => setShowNotifications(v => !v)}
+                className="relative text-neutral-400 hover:text-[#FFD700] transition-colors p-2"
+              >
                 <Bell className="h-4 w-4 md:h-5 md:w-5" />
                 {unreadCount > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 h-4 w-4 bg-[#FF0000] rounded-full text-[9px] font-bold text-white flex items-center justify-center animate-pulse">
-                    {unreadCount}
+                    {unreadCount > 9 ? '9+' : unreadCount}
                   </span>
                 )}
               </button>
-              {showNotifications && <NotificationsPanel onClose={() => setShowNotifications(false)} />}
+              {showNotifications && (
+                <NotificationsPanel
+                  branch={notifBranch}
+                  onClose={() => setShowNotifications(false)}
+                  onUnreadChange={setUnreadCount}
+                />
+              )}
             </div>
+
             <UserMenu user={user} onLogout={onLogout} />
           </div>
         </header>
 
+        {/* Mobile search bar (shown when toggled) */}
         {mobileSearchOpen && (
           <div className="md:hidden px-3 py-3 border-b border-neutral-800 bg-black">
-            <GlobalSearch onNavigate={(tab) => { safeSetTab(tab); setMobileSearchOpen(false); }} allowedTabs={allowedTabs} />
+            <GlobalSearch
+              onNavigate={tab => { safeSetTab(tab); setMobileSearchOpen(false); }}
+              allowedTabs={allowedTabs}
+            />
           </div>
         )}
 
-        <div className="p-4 md:p-8 max-w-[1600px] mx-auto">{renderContent()}</div>
+        {/* Page content */}
+        <div className="p-4 md:p-8 max-w-[1600px] mx-auto">
+          {renderContent()}
+        </div>
       </main>
     </div>
   );
