@@ -77,6 +77,8 @@ export function useLateAlerts(
   const firedRef = useRef<Set<string>>(new Set());
 
   const runCheck = useCallback(async () => {
+    if (!navigator.onLine) return;
+
     const todayStr  = new Date().toISOString().split('T')[0];
     const candidates = bookings.filter(
       b => b.status === 'Pending' && b.date === todayStr && b.timeSlot,
@@ -91,7 +93,6 @@ export function useLateAlerts(
       for (const level of levels) {
         const key = `${booking.id}-${level}`;
         if (firedRef.current.has(key)) continue;
-        firedRef.current.add(key);
 
         let smsSent = false, autoCancelled = false;
         try {
@@ -103,7 +104,8 @@ export function useLateAlerts(
           const data = await res.json();
           smsSent       = data.smsSent      ?? false;
           autoCancelled = data.autoCancelled ?? false;
-        } catch (e) { console.error('[late-alert]', e); }
+          firedRef.current.add(key);
+        } catch (e) { console.error('[late-alert]', e); continue; }
 
         setAlerts(p => [...p, {
           bookingId:     booking.id,
