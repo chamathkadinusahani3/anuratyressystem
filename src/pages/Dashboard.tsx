@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Sidebar } from '../components/layout/Sidebar';
 import { StatsCards } from '../components/dashboard/StatsCards';
 import { StaffAssignment } from '../components/dashboard/StaffAssignment';
@@ -6,7 +6,7 @@ import {
   Bell, Search, X, PlayCircle, CheckCircle, XCircle,
   LogOut, Menu, Shield
 } from 'lucide-react';
-import { SettingsPage } from './SettingsPage';
+import { SettingsPage, applyTheme, APPEARANCE_KEY } from './SettingsPage';
 import UserManagement from './UserManagementpage';
 import { CorporateManagementPage } from './CorporateManagementPage';
 import { BookingsPage } from './BookingsPage';
@@ -14,6 +14,10 @@ import { StaffPage } from './StaffPage';
 import { InventoryPage } from './InventoryPage';
 import { CustomersPage } from './CustomersPage';
 import { JobManagementPage } from './JobManagementPage';
+import { QuotationPage }    from './QuotationPage';
+import { InvoicePage }      from './InvoicePage';
+import { ReportsPage }      from './ReportsPage';
+import { AdminPage }        from './AdminPage';
 import { canAccessTab, getAllowedTabs, getSessionUser, roleBadgeClass, type UserRole } from '../lib/auth';
 
 // ─── API constant (single source of truth) ────────────────────────────────────
@@ -81,12 +85,7 @@ function NotificationsPanel({
       return;
     }
 
-    // FIX: use API_URL directly (already contains /api prefix)
-    // Adjust the path below to match your actual backend route.
-    // Common options:
-    //   ${API_URL}/notifications?branch=...
-    //   ${API_URL}/staff?resource=notifications&branch=...
-    const url = `${API_URL}/notifications?branch=${encodeURIComponent(branch)}`;
+    const url = `${API_URL}/staff?resource=notifications&branch=${encodeURIComponent(branch)}`;
 
     try {
       setFetchError(null);
@@ -130,9 +129,10 @@ function NotificationsPanel({
     setNotifications(updated);
     onUnreadChange?.(updated.filter(n => !n.read).length);
     try {
-      await fetch(`${API_URL}/notifications/${id}/read`, {
+      await fetch(`${API_URL}/staff`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mark_read', id }),
       });
     } catch (err) {
       console.warn('[Notifications] markRead failed:', err);
@@ -144,10 +144,10 @@ function NotificationsPanel({
     setNotifications(updated);
     onUnreadChange?.(0);
     try {
-      await fetch(`${API_URL}/notifications/mark-all-read`, {
+      await fetch(`${API_URL}/staff`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ branch }),
+        body: JSON.stringify({ action: 'mark_all_read', branch }),
       });
     } catch (err) {
       console.warn('[Notifications] markAllRead failed:', err);
@@ -159,7 +159,11 @@ function NotificationsPanel({
     setNotifications(updated);
     onUnreadChange?.(updated.filter(n => !n.read).length);
     try {
-      await fetch(`${API_URL}/notifications/${id}`, { method: 'DELETE' });
+      await fetch(`${API_URL}/staff`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', id }),
+      });
     } catch (err) {
       console.warn('[Notifications] delete failed:', err);
     }
@@ -378,60 +382,46 @@ function RecentBookingsTable({
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState<string | null>(null);
 
-  useEffect(() => {
-    // FIX: read session inside the effect so it's always fresh
+  const loadBookings = async () => {
     const session = getSessionUser();
+    const headers: Record<string, string> = {
+      'X-User-Role':   session?.role   || 'Super Admin',
+      'X-User-Branch': session?.branch || '',
+    };
+    const res = await fetch(`${API_URL}/bookings?limit=8`, { headers });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    return (d.bookings || d || []) as Booking[];
+  };
 
-    fetch(`${API_URL}/bookings?limit=8`)
-      .then(async res => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then(d => {
-        let bks: Booking[] = d.bookings || d || [];
-        // Filter by branch for non-admin roles
-        if (session && !['Super Admin', 'Admin'].includes(session.role) && session.branch) {
-          bks = bks.filter(b =>
-            !b.branch ||
-            b.branch === session.branch ||
-            b.branch?.toLowerCase().includes(session.branch.toLowerCase())
-          );
-        }
-        setBookings(bks);
-        setError(null);
-      })
+  useEffect(() => {
+    loadBookings()
+      .then(bks => { setBookings(bks); setError(null); })
       .catch(err => {
         console.error('[RecentBookings] fetch failed:', err);
         setError(err.message || 'Failed to load bookings');
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const changeStatus = async (id: string, status: BookingStatus) => {
-    // Optimistic update
     setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b));
+    const session = getSessionUser();
     try {
       const res = await fetch(`${API_URL}/bookings/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        method:  'PATCH',
+        headers: {
+          'Content-Type':  'application/json',
+          'X-User-Role':   session?.role   || 'Super Admin',
+          'X-User-Branch': session?.branch || '',
+        },
         body: JSON.stringify({ status }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (err) {
       console.error('[RecentBookings] status update failed:', err);
-      // Revert optimistic update on failure
       alert('Failed to update status. Please try again.');
-      const session = getSessionUser();
-      fetch(`${API_URL}/bookings?limit=8`)
-        .then(r => r.json())
-        .then(d => {
-          let bks: Booking[] = d.bookings || d || [];
-          if (session && !['Super Admin', 'Admin'].includes(session.role) && session.branch) {
-            bks = bks.filter(b => !b.branch || b.branch === session.branch);
-          }
-          setBookings(bks);
-        })
-        .catch(() => {});
+      loadBookings().then(bks => setBookings(bks)).catch(() => {});
     }
   };
 
@@ -631,6 +621,14 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
   const [unreadCount,       setUnreadCount]       = useState(0);
   const [mobileMenuOpen,    setMobileMenuOpen]    = useState(false);
   const [mobileSearchOpen,  setMobileSearchOpen]  = useState(false);
+
+  // Restore saved appearance settings on every app load
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(APPEARANCE_KEY);
+      if (stored) applyTheme(JSON.parse(stored));
+    } catch {}
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const notifRef = useRef<HTMLDivElement>(null);
 
   const role        = user.role as UserRole;
@@ -699,7 +697,7 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
         </p>
       </div>
 
-      <StatsCards />
+      <StatsCards role={role} branch={session?.branch} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8 mt-4">
         <div className="lg:col-span-2 h-auto lg:h-[600px]">
@@ -731,6 +729,10 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
       case 'corporate-data':  return <CorporateManagementPage />;
       case 'customers':       return <CustomersPage />;
       case 'jobs':            return <JobManagementPage />;
+      case 'quotations':      return <QuotationPage />;
+      case 'invoices':        return <InvoicePage />;
+      case 'reports':         return <ReportsPage />;
+      case 'admin':           return <AdminPage />;
       default:                return <div className="text-white">Page not found</div>;
     }
   };

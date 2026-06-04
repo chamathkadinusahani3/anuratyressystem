@@ -1,8 +1,7 @@
 // Sidebar.tsx — updated to accept allowedTabs prop for RBAC nav filtering
-import React from 'react';
 import {
   LayoutDashboard, Calendar, Users, Package, Settings,
-  Shield, Building2, UserCog, Car, Wrench, ChevronRight
+  Shield, Building2, UserCog, Car, Wrench, ChevronRight, FileText, DollarSign, BarChart2, SlidersHorizontal
 } from 'lucide-react';
 import logo from '../../assets/logo.png';
 
@@ -19,6 +18,10 @@ const ALL_NAV_ITEMS = [
   { id: 'inventory',       label: 'Inventory',          icon: Package,          group: 'main' },
   { id: 'customers',       label: 'Customers',          icon: Car,              group: 'main' },
   { id: 'jobs',            label: 'Job Management',     icon: Wrench,           group: 'main' },
+  { id: 'quotations',     label: 'Quotations',          icon: FileText,         group: 'main' },
+  { id: 'invoices',       label: 'Invoices',             icon: DollarSign,       group: 'main' },
+  { id: 'reports',        label: 'Reports & Analytics',  icon: BarChart2,          group: 'main' },
+  { id: 'admin',          label: 'Administration',       icon: SlidersHorizontal,  group: 'admin' },
   { id: 'corporate-data',  label: 'Corporate',          icon: Building2,        group: 'admin' },
   { id: 'user-management', label: 'User Management',    icon: UserCog,          group: 'admin' },
   { id: 'settings',        label: 'Settings',           icon: Settings,         group: 'bottom' },

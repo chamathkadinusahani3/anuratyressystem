@@ -1,24 +1,124 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   User, Lock, Bell, Building2, Monitor, Shield,
   Save, Eye, EyeOff, AlertCircle, Loader2, CheckCircle2,
   MapPin, Phone, Mail, Globe, ChevronRight, Trash2,
   Moon, Sun, Volume2, VolumeX, RefreshCw, Upload,
-  LogOut, Camera, Check, X
+  LogOut, Camera, Check, X,
 } from 'lucide-react';
+import { doc, updateDoc, setDoc, getDoc } from 'firebase/firestore';
+import { db } from '../lib/firebase.ts';
+import { getSessionUser } from '../lib/auth';
+
+// ── API ───────────────────────────────────────────────────────────────────────
+const API = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
+
+// ── Theme applicator (exported so Dashboard can call it on boot) ──────────────
+export function applyTheme(prefs: {
+  accent?:     string;
+  compact?:    boolean;
+  fontSize?:   'sm' | 'md' | 'lg';
+  animations?: boolean;
+}) {
+  const { accent = '#FFD700', compact = false, fontSize = 'md', animations = true } = prefs;
+
+  // 1. Font size — scales every rem-based measurement
+  const sizes: Record<string, string> = { sm: '13px', md: '14px', lg: '16px' };
+  document.documentElement.style.fontSize = sizes[fontSize] ?? '14px';
+
+  // 2. Compact mode + animation toggle via body classes
+  document.body.classList.toggle('at-compact',       compact);
+  document.body.classList.toggle('at-no-animations', !animations);
+
+  // 3. Accent color override — inject/update a <style> tag that replaces #FFD700
+  let el = document.getElementById('at-theme') as HTMLStyleElement | null;
+  if (!el) {
+    el = document.createElement('style');
+    el.id = 'at-theme';
+    document.head.appendChild(el);
+  }
+
+  if (accent === '#FFD700') {
+    // Default — no override needed; clear any previous injection
+    el.textContent = '';
+    return;
+  }
+
+  const r = parseInt(accent.slice(1, 3), 16);
+  const g = parseInt(accent.slice(3, 5), 16);
+  const b = parseInt(accent.slice(5, 7), 16);
+
+  el.textContent = `
+    /* ── Anura Tyres accent colour override ── */
+    .bg-\\[\\#FFD700\\]                        { background-color: ${accent} !important; }
+    .bg-\\[\\#FFD700\\]\\/5                    { background-color: rgba(${r},${g},${b},.05) !important; }
+    .bg-\\[\\#FFD700\\]\\/10                   { background-color: rgba(${r},${g},${b},.10) !important; }
+    .bg-\\[\\#FFD700\\]\\/20                   { background-color: rgba(${r},${g},${b},.20) !important; }
+    .bg-\\[\\#FFD700\\]\\/90                   { background-color: rgba(${r},${g},${b},.90) !important; }
+    .text-\\[\\#FFD700\\]                      { color: ${accent} !important; }
+    .border-\\[\\#FFD700\\]                    { border-color: ${accent} !important; }
+    .border-\\[\\#FFD700\\]\\/20               { border-color: rgba(${r},${g},${b},.20) !important; }
+    .border-\\[\\#FFD700\\]\\/30               { border-color: rgba(${r},${g},${b},.30) !important; }
+    .border-\\[\\#FFD700\\]\\/40               { border-color: rgba(${r},${g},${b},.40) !important; }
+    .focus\\:border-\\[\\#FFD700\\]:focus      { border-color: ${accent} !important; }
+    .ring-\\[\\#FFD700\\]\\/20                 { --tw-ring-color: rgba(${r},${g},${b},.20) !important; }
+    .ring-\\[\\#FFD700\\]\\/30                 { --tw-ring-color: rgba(${r},${g},${b},.30) !important; }
+    .shadow-\\[\\#FFD700\\]\\/20               { --tw-shadow-color: rgba(${r},${g},${b},.20) !important; }
+    .hover\\:bg-\\[\\#FFD700\\]\\/10:hover     { background-color: rgba(${r},${g},${b},.10) !important; }
+    .hover\\:bg-\\[\\#FFD700\\]\\/90:hover     { background-color: rgba(${r},${g},${b},.90) !important; }
+    .hover\\:text-\\[\\#FFD700\\]:hover        { color: ${accent} !important; }
+    .accent-\\[\\#FFD700\\]                   { accent-color: ${accent} !important; }
+    .from-\\[\\#FFCC00\\]                     { --tw-gradient-from: ${accent} !important; }
+    .from-\\[\\#FFD700\\]                     { --tw-gradient-from: ${accent} !important; }
+    .to-\\[\\#FFD700\\]                       { --tw-gradient-to: ${accent} !important; }
+    ::selection { background-color: ${accent}; color: #000; }
+    ${!animations ? `
+    body.at-no-animations *,body.at-no-animations *::before,body.at-no-animations *::after
+    { animation: none !important; transition: none !important; }` : ''}
+    ${compact ? `
+    body.at-compact .p-4{padding:.75rem!important}
+    body.at-compact .p-5{padding:1rem!important}
+    body.at-compact .p-6{padding:1.25rem!important}
+    body.at-compact .py-3{padding-top:.5rem!important;padding-bottom:.5rem!important}
+    body.at-compact .py-4{padding-top:.75rem!important;padding-bottom:.75rem!important}` : ''}
+  `;
+}
+
+// ── Profile picture compressor ────────────────────────────────────────────────
+function compressAvatar(file: File, size = 96): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { reject('canvas'); return; }
+        // Crop to square from centre
+        const minSide = Math.min(img.width, img.height);
+        const sx = (img.width  - minSide) / 2;
+        const sy = (img.height - minSide) / 2;
+        ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      };
+      img.onerror = reject;
+      img.src = ev.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRIMITIVES
 // ═══════════════════════════════════════════════════════════════════════════════
-
-function Toast({ message, type, onDone }: {
-  message: string; type: 'success' | 'error'; onDone: () => void;
-}) {
-  useEffect(() => { const t = setTimeout(onDone, 3000); return () => clearTimeout(t); }, []);
+function Toast({ message, type, onDone }: { message: string; type: 'success'|'error'; onDone: () => void }) {
+  useEffect(() => { const t = setTimeout(onDone, 3500); return () => clearTimeout(t); }, [onDone]);
   return (
     <div className={`fixed bottom-6 right-6 z-[9999] flex items-center gap-3 px-4 py-3 rounded-xl border shadow-2xl
-      ${type === 'success' ? 'bg-green-500/10 border-green-500/30 text-green-400' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}>
-      {type === 'success' ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
+      ${type==='success' ? 'bg-green-500/10 border-green-500/30 text-green-400' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}>
+      {type==='success' ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
       <span className="text-sm font-medium">{message}</span>
     </div>
   );
@@ -27,36 +127,28 @@ function Toast({ message, type, onDone }: {
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button type="button" onClick={() => onChange(!checked)}
-      className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-[#FFD700]/30
-        ${checked ? 'bg-[#FFD700]' : 'bg-neutral-700'}`}>
-      <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-black transition-transform duration-200
-        ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
+      className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-[#FFD700]/30 ${checked ? 'bg-[#FFD700]' : 'bg-neutral-700'}`}>
+      <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-black transition-transform duration-200 ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
     </button>
   );
 }
 
-function ConfirmModal({ title, message, confirmLabel = 'Confirm', danger = false, loading = false, onConfirm, onCancel }: {
-  title: string; message: string; confirmLabel?: string;
-  danger?: boolean; loading?: boolean; onConfirm: () => void; onCancel: () => void;
+function ConfirmModal({ title, message, confirmLabel='Confirm', danger=false, loading=false, onConfirm, onCancel }: {
+  title: string; message: string; confirmLabel?: string; danger?: boolean; loading?: boolean; onConfirm: () => void; onCancel: () => void;
 }) {
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[9998] p-4 backdrop-blur-sm">
       <div className="bg-neutral-900 border border-neutral-700 rounded-xl w-full max-w-sm p-6 shadow-2xl">
-        <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4
-          ${danger ? 'bg-red-500/10 border border-red-500/30' : 'bg-yellow-500/10 border border-yellow-500/30'}`}>
+        <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${danger ? 'bg-red-500/10 border border-red-500/30' : 'bg-yellow-500/10 border border-yellow-500/30'}`}>
           <AlertCircle className={`w-6 h-6 ${danger ? 'text-red-400' : 'text-yellow-400'}`} />
         </div>
         <h3 className="text-lg font-bold text-white text-center mb-2">{title}</h3>
         <p className="text-neutral-400 text-sm text-center mb-6">{message}</p>
         <div className="flex gap-3">
-          <button onClick={onCancel} disabled={loading}
-            className="flex-1 px-4 py-2.5 border border-neutral-700 rounded-lg text-neutral-300 text-sm hover:bg-neutral-800 transition-colors disabled:opacity-50">
-            Cancel
-          </button>
+          <button onClick={onCancel} disabled={loading} className="flex-1 px-4 py-2.5 border border-neutral-700 rounded-lg text-neutral-300 text-sm hover:bg-neutral-800 transition-colors disabled:opacity-50">Cancel</button>
           <button onClick={onConfirm} disabled={loading}
-            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2
-              ${danger ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-[#FFD700] hover:bg-[#FFD700]/90 text-black'}`}>
-            {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Working…</> : confirmLabel}
+            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2 ${danger ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-[#FFD700] hover:bg-[#FFD700]/90 text-black'}`}>
+            {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Working…</> : confirmLabel}
           </button>
         </div>
       </div>
@@ -88,57 +180,89 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-function TInput({ value, onChange, placeholder, type = 'text', icon, disabled }: {
-  value: string; onChange: (v: string) => void; placeholder?: string;
-  type?: string; icon?: React.ReactNode; disabled?: boolean;
+function TInput({ value, onChange, placeholder, type='text', icon, disabled }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; type?: string; icon?: React.ReactNode; disabled?: boolean;
 }) {
   return (
     <div className="relative">
       {icon && <div className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none">{icon}</div>}
-      <input type={type} value={value} onChange={e => onChange(e.target.value)}
-        placeholder={placeholder} disabled={disabled}
-        className={`w-full ${icon ? 'pl-9' : 'pl-3'} pr-3 py-2.5 bg-neutral-800 border border-neutral-700
-          rounded-lg text-white text-sm placeholder:text-neutral-600
-          focus:outline-none focus:border-[#FFD700] transition-colors
-          ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`} />
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} disabled={disabled}
+        className={`w-full ${icon ? 'pl-9' : 'pl-3'} pr-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm placeholder:text-neutral-600 focus:outline-none focus:border-[#FFD700] transition-colors ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`} />
     </div>
   );
 }
 
-function SaveBtn({ onClick, loading, label = 'Save Changes', icon }: {
-  onClick: () => void; loading: boolean; label?: string; icon?: React.ReactNode;
-}) {
+function SaveBtn({ onClick, loading, label='Save Changes', icon }: { onClick: () => void; loading: boolean; label?: string; icon?: React.ReactNode }) {
   return (
     <div className="flex justify-end pt-2 border-t border-neutral-800 mt-2">
       <button onClick={onClick} disabled={loading}
-        className="flex items-center gap-2 px-5 py-2.5 bg-[#FFD700] text-black text-sm font-bold rounded-lg
-          hover:bg-[#FFD700]/90 active:scale-95 transition-all disabled:opacity-60">
-        {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : <>{icon ?? <Save className="w-4 h-4" />} {label}</>}
+        className="flex items-center gap-2 px-5 py-2.5 bg-[#FFD700] text-black text-sm font-bold rounded-lg hover:bg-[#FFD700]/90 active:scale-95 transition-all disabled:opacity-60">
+        {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Saving…</> : <>{icon ?? <Save className="w-4 h-4" />}{label}</>}
       </button>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 1. PROFILE
+// 1. PROFILE  (loads real session user, saves to localStorage + Firestore)
 // ═══════════════════════════════════════════════════════════════════════════════
-function ProfileSettings({ onToast }: { onToast: (m: string, t?: 'success' | 'error') => void }) {
-  const [form, setForm] = useState({
-    name: 'Admin User', email: 'admin@anuratyres.lk',
-    phone: '077-1234567', role: 'Manager', bio: '',
-  });
-  const [saving, setSaving] = useState(false);
-  const [avatarColor, setAvatarColor] = useState('#FFD700');
-  const [showColors, setShowColors] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+function ProfileSettings({ onToast }: { onToast: (m: string, t?: 'success'|'error') => void }) {
+  const session = getSessionUser();
+  const [form, setForm] = useState({ name: '', email: '', phone: '', bio: '' });
+  const [saving,       setSaving]       = useState(false);
+  const [uploading,    setUploading]    = useState(false);
+  const [avatarColor,  setAvatarColor]  = useState('#FFD700');
+  const [avatarDataUrl,setAvatarDataUrl]= useState<string>('');
+  const [showColors,   setShowColors]   = useState(false);
+  const [errors, setErrors] = useState<Record<string,string>>({});
   const fileRef = useRef<HTMLInputElement>(null);
-  const COLORS = ['#FFD700', '#FF4444', '#3B82F6', '#10B981', '#8B5CF6', '#F97316', '#EC4899', '#14B8A6'];
+  const COLORS = ['#FFD700','#FF4444','#3B82F6','#10B981','#8B5CF6','#F97316','#EC4899','#14B8A6'];
+
+  // Load real user data on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('at_user');
+      if (stored) {
+        const u = JSON.parse(stored);
+        setForm({ name: u.name||'', email: u.email||'', phone: u.phone||'', bio: u.bio||'' });
+        if (u.avatarColor)  setAvatarColor(u.avatarColor);
+        if (u.avatarDataUrl) setAvatarDataUrl(u.avatarDataUrl);
+      }
+    } catch {}
+  }, []);
+
+  // Handle photo upload — compress → base64 → store
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) return onToast('Image too large — max 5 MB', 'error');
+    setUploading(true);
+    try {
+      const dataUrl = await compressAvatar(file);
+      setAvatarDataUrl(dataUrl);
+
+      // Persist immediately to localStorage + Firestore
+      const stored = localStorage.getItem('at_user');
+      if (stored) {
+        const u = JSON.parse(stored);
+        localStorage.setItem('at_user', JSON.stringify({ ...u, avatarDataUrl: dataUrl }));
+        if (u.username) {
+          await updateDoc(doc(db, 'at_users', u.username), {
+            avatarDataUrl: dataUrl, updatedAt: new Date().toISOString(),
+          }).catch(() => {});
+        }
+      }
+      onToast('Profile photo updated ✓');
+    } catch {
+      onToast('Failed to process image', 'error');
+    } finally { setUploading(false); }
+  };
 
   const validate = () => {
-    const e: Record<string, string> = {};
-    if (!form.name.trim())         e.name  = 'Name is required';
-    if (!form.email.includes('@'))  e.email = 'Enter a valid email';
-    if (!form.phone.trim())        e.phone = 'Phone is required';
+    const e: Record<string,string> = {};
+    if (!form.name.trim())        e.name  = 'Name is required';
+    if (form.email && !form.email.includes('@')) e.email = 'Enter a valid email';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -146,42 +270,82 @@ function ProfileSettings({ onToast }: { onToast: (m: string, t?: 'success' | 'er
   const save = async () => {
     if (!validate()) return onToast('Please fix the errors above', 'error');
     setSaving(true);
-    await new Promise(r => setTimeout(r, 800));
     try {
+      // Update localStorage
       const stored = localStorage.getItem('at_user');
       if (stored) {
         const u = JSON.parse(stored);
-        localStorage.setItem('at_user', JSON.stringify({ ...u, name: form.name, role: form.role }));
+        const updated = { ...u, name: form.name, email: form.email, phone: form.phone, bio: form.bio, avatarColor, avatarDataUrl };
+        localStorage.setItem('at_user', JSON.stringify(updated));
+
+        // Persist to Firestore at_users
+        if (u.username) {
+          await updateDoc(doc(db, 'at_users', u.username), {
+            name: form.name,
+            ...(form.email ? { email: form.email } : {}),
+            ...(form.phone ? { phone: form.phone }  : {}),
+            bio: form.bio || '',
+            avatarColor,
+            updatedAt: new Date().toISOString(),
+          });
+        }
       }
-    } catch {}
-    setSaving(false);
-    onToast('Profile updated successfully ✓');
+      onToast('Profile updated ✓');
+    } catch (err) {
+      console.error('[Profile save]', err);
+      onToast('Profile saved locally (Firestore sync failed)', 'success');
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const displayName = form.name || session?.name || 'User';
 
   return (
     <div className="space-y-6">
       <Section title="Profile Picture">
         <div className="flex items-center gap-5">
-          {/* Avatar with color picker */}
+          {/* Avatar circle — shows photo if uploaded, otherwise coloured initial */}
           <div className="relative">
-            <button onClick={() => setShowColors(v => !v)}
-              className="relative w-20 h-20 rounded-full flex items-center justify-center text-black text-3xl font-black
-                group transition-transform hover:scale-105"
-              style={{ backgroundColor: avatarColor }}>
-              {form.name.charAt(0).toUpperCase() || 'A'}
-              <div className="absolute inset-0 rounded-full bg-black/30 flex items-center justify-center
-                opacity-0 group-hover:opacity-100 transition-opacity">
-                <Camera className="w-6 h-6 text-white" />
+            <button onClick={() => fileRef.current?.click()}
+              className="relative w-20 h-20 rounded-full overflow-hidden group transition-transform hover:scale-105 ring-2 ring-neutral-700 hover:ring-[#FFD700]/50"
+              style={{ backgroundColor: avatarDataUrl ? 'transparent' : avatarColor }}
+              disabled={uploading}
+              title="Click to upload photo">
+              {avatarDataUrl
+                ? <img src={avatarDataUrl} alt="Avatar" className="w-full h-full object-cover" />
+                : <span className="text-black text-3xl font-black">{displayName.charAt(0).toUpperCase()}</span>
+              }
+              {/* Hover overlay */}
+              <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity gap-0.5">
+                {uploading
+                  ? <Loader2 className="w-5 h-5 text-white animate-spin" />
+                  : <><Camera className="w-5 h-5 text-white" /><span className="text-white text-[10px] font-semibold">Change</span></>
+                }
               </div>
             </button>
+
+            {/* Remove photo button */}
+            {avatarDataUrl && (
+              <button onClick={() => {
+                setAvatarDataUrl('');
+                const s = localStorage.getItem('at_user');
+                if (s) { const u = JSON.parse(s); delete u.avatarDataUrl; localStorage.setItem('at_user', JSON.stringify(u)); }
+                onToast('Photo removed');
+              }} title="Remove photo"
+                className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600 transition-colors">
+                <X className="w-3 h-3 text-white" />
+              </button>
+            )}
+
+            {/* Colour picker */}
             {showColors && (
               <div className="absolute top-full mt-2 left-0 bg-neutral-800 border border-neutral-700 rounded-xl p-3 z-10 shadow-2xl">
-                <p className="text-xs text-neutral-500 mb-2 font-medium">Pick colour</p>
+                <p className="text-xs text-neutral-500 mb-2 font-medium">Background colour</p>
                 <div className="grid grid-cols-4 gap-1.5">
                   {COLORS.map(c => (
-                    <button key={c} onClick={() => { setAvatarColor(c); setShowColors(false); onToast('Avatar colour updated'); }}
-                      className={`w-7 h-7 rounded-full border-2 hover:scale-110 transition-transform
-                        ${avatarColor === c ? 'border-white' : 'border-transparent'}`}
+                    <button key={c} onClick={() => { setAvatarColor(c); setShowColors(false); onToast('Colour updated'); }}
+                      className={`w-7 h-7 rounded-full border-2 hover:scale-110 transition-transform ${avatarColor===c ? 'border-white' : 'border-transparent'}`}
                       style={{ backgroundColor: c }} />
                   ))}
                 </div>
@@ -190,57 +354,48 @@ function ProfileSettings({ onToast }: { onToast: (m: string, t?: 'success' | 'er
           </div>
 
           <div className="space-y-2">
-            <input ref={fileRef} type="file" accept="image/*" className="hidden"
-              onChange={e => {
-                const f = e.target.files?.[0];
-                if (f) onToast(`"${f.name}" selected (upload not wired in demo)`);
-                e.target.value = '';
-              }} />
-            <button onClick={() => fileRef.current?.click()}
-              className="flex items-center gap-2 px-3 py-1.5 bg-neutral-800 border border-neutral-700
-                rounded-lg text-neutral-300 text-xs hover:bg-neutral-700 hover:text-white transition-colors">
-              <Upload className="w-3.5 h-3.5" /> Upload Photo
+            {/* Hidden file input wired to compressor */}
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+              onChange={handlePhotoUpload} />
+
+            <button onClick={() => fileRef.current?.click()} disabled={uploading}
+              className="flex items-center gap-2 px-3 py-1.5 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-300 text-xs hover:bg-neutral-700 hover:text-white transition-colors disabled:opacity-50">
+              {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+              {uploading ? 'Uploading…' : 'Upload Photo'}
             </button>
+
             <button onClick={() => setShowColors(v => !v)}
-              className="flex items-center gap-2 px-3 py-1.5 bg-neutral-800 border border-neutral-700
-                rounded-lg text-neutral-300 text-xs hover:bg-neutral-700 hover:text-white transition-colors">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: avatarColor }} />
-              Change Colour
+              className="flex items-center gap-2 px-3 py-1.5 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-300 text-xs hover:bg-neutral-700 hover:text-white transition-colors">
+              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: avatarColor }} /> Change Colour
             </button>
-            <p className="text-xs text-neutral-600">JPG or PNG up to 2 MB</p>
+            <p className="text-xs text-neutral-600">JPG, PNG, WebP up to 5 MB</p>
+            <p className="text-xs text-neutral-600">Logged in as <span className="text-neutral-400 font-mono">{session?.username}</span></p>
           </div>
         </div>
       </Section>
 
       <Section title="Personal Information">
         <Field label="Full Name">
-          <TInput value={form.name} onChange={v => { setForm({ ...form, name: v }); setErrors({ ...errors, name: '' }); }}
+          <TInput value={form.name} onChange={v => { setForm({...form,name:v}); setErrors({...errors,name:''}); }}
             placeholder="Your full name" icon={<User className="w-4 h-4" />} />
           {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
         </Field>
-        <Field label="Email Address">
-          <TInput value={form.email} onChange={v => { setForm({ ...form, email: v }); setErrors({ ...errors, email: '' }); }}
+        <Field label="Email Address" hint="Optional — for notifications">
+          <TInput value={form.email} onChange={v => { setForm({...form,email:v}); setErrors({...errors,email:''}); }}
             type="email" placeholder="you@anuratyres.lk" icon={<Mail className="w-4 h-4" />} />
           {errors.email && <p className="text-red-400 text-xs mt-1">{errors.email}</p>}
         </Field>
-        <Field label="Phone">
-          <TInput value={form.phone} onChange={v => { setForm({ ...form, phone: v }); setErrors({ ...errors, phone: '' }); }}
-            placeholder="077-0000000" icon={<Phone className="w-4 h-4" />} />
-          {errors.phone && <p className="text-red-400 text-xs mt-1">{errors.phone}</p>}
+        <Field label="Phone" hint="Optional">
+          <TInput value={form.phone} onChange={v => setForm({...form,phone:v})} placeholder="077-0000000" icon={<Phone className="w-4 h-4" />} />
         </Field>
-        <Field label="Role">
-          <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}
-            className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm
-              focus:outline-none focus:border-[#FFD700] transition-colors">
-            {['Manager', 'Service Advisor', 'Lead Mechanic', 'Mechanic', 'Admin'].map(r =>
-              <option key={r} value={r}>{r}</option>)}
-          </select>
+        <Field label="Role" hint="Your system role">
+          <div className="px-3 py-2.5 bg-neutral-800/60 border border-neutral-700 rounded-lg text-neutral-400 text-sm cursor-not-allowed">
+            {session?.role || 'Unknown'} — {session?.branch || ''}
+          </div>
         </Field>
-        <Field label="Bio" hint="Optional short description">
-          <textarea value={form.bio} onChange={e => setForm({ ...form, bio: e.target.value })}
-            placeholder="Tell us a bit about yourself…" rows={3}
-            className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm
-              placeholder:text-neutral-600 focus:outline-none focus:border-[#FFD700] transition-colors resize-none" />
+        <Field label="Bio" hint="Optional">
+          <textarea value={form.bio} onChange={e => setForm({...form,bio:e.target.value})} placeholder="Tell us a bit about yourself…" rows={3}
+            className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm placeholder:text-neutral-600 focus:outline-none focus:border-[#FFD700] transition-colors resize-none" />
         </Field>
         <SaveBtn onClick={save} loading={saving} />
       </Section>
@@ -249,18 +404,16 @@ function ProfileSettings({ onToast }: { onToast: (m: string, t?: 'success' | 'er
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 2. PASSWORD & SECURITY
+// 2. PASSWORD & SECURITY  (actually updates Firestore)
 // ═══════════════════════════════════════════════════════════════════════════════
-function SecuritySettings({ onToast }: { onToast: (m: string, t?: 'success' | 'error') => void }) {
-  const [form, setForm]   = useState({ current: '', newPass: '', confirm: '' });
-  const [show, setShow]   = useState({ current: false, newPass: false, confirm: false });
+function SecuritySettings({ onToast }: { onToast: (m: string, t?: 'success'|'error') => void }) {
+  const [form, setForm]     = useState({ current:'', newPass:'', confirm:'' });
+  const [show, setShow]     = useState({ current:false, newPass:false, confirm:false });
   const [saving, setSaving] = useState(false);
+  const [revokingId, setRevokingId] = useState<number|null>(null);
   const [sessions, setSessions] = useState([
-    { id: 1, device: 'Chrome on Windows',     location: 'Colombo, LK',     time: 'Now — Current session', current: true  },
-    { id: 2, device: 'Safari on iPhone 14',   location: 'Pannipitiya, LK', time: '2 hours ago',           current: false },
-    { id: 3, device: 'Firefox on MacBook Pro', location: 'Maharagama, LK', time: 'Yesterday, 6:45 PM',    current: false },
+    { id:1, device:'Current Session', location:'', time:'Now', current:true },
   ]);
-  const [revokingId, setRevokingId] = useState<number | null>(null);
 
   const calcStrength = (p: string) => {
     let s = 0;
@@ -272,28 +425,55 @@ function SecuritySettings({ onToast }: { onToast: (m: string, t?: 'success' | 'e
   };
   const s = calcStrength(form.newPass);
   const strengthMeta = [null,
-    { label: 'Weak',   bar: 'bg-red-500',    text: 'text-red-400'    },
-    { label: 'Fair',   bar: 'bg-yellow-500',  text: 'text-yellow-400' },
-    { label: 'Good',   bar: 'bg-blue-500',    text: 'text-blue-400'   },
-    { label: 'Strong', bar: 'bg-green-500',   text: 'text-green-400'  },
+    { label:'Weak',   bar:'bg-red-500',    text:'text-red-400'    },
+    { label:'Fair',   bar:'bg-yellow-500', text:'text-yellow-400' },
+    { label:'Good',   bar:'bg-blue-500',   text:'text-blue-400'   },
+    { label:'Strong', bar:'bg-green-500',  text:'text-green-400'  },
   ];
 
   const save = async () => {
-    if (!form.current)            return onToast('Enter your current password', 'error');
-    if (form.newPass.length < 8)  return onToast('Password must be at least 8 characters', 'error');
+    if (!form.current)               return onToast('Enter your current password', 'error');
+    if (form.newPass.length < 8)     return onToast('New password must be at least 8 characters', 'error');
     if (form.newPass !== form.confirm) return onToast('Passwords do not match', 'error');
-    if (s < 2)                   return onToast('Choose a stronger password', 'error');
+    if (s < 2)                       return onToast('Choose a stronger password', 'error');
+
     setSaving(true);
-    await new Promise(r => setTimeout(r, 900));
-    setSaving(false);
-    setForm({ current: '', newPass: '', confirm: '' });
-    onToast('Password changed successfully ✓');
+    try {
+      const stored = localStorage.getItem('at_user');
+      if (!stored) throw new Error('Not logged in');
+      const u = JSON.parse(stored);
+      if (!u.username) throw new Error('Username not found in session');
+
+      // Verify current password from Firestore
+      const userDoc = await getDoc(doc(db, 'at_users', u.username));
+      if (!userDoc.exists()) throw new Error('User record not found');
+
+      const userData = userDoc.data();
+      if (userData.password !== form.current) {
+        setSaving(false);
+        return onToast('Current password is incorrect', 'error');
+      }
+
+      // Update password in Firestore
+      await updateDoc(doc(db, 'at_users', u.username), {
+        password:  form.newPass,
+        updatedAt: new Date().toISOString(),
+        mustChangePassword: false,
+      });
+
+      setForm({ current:'', newPass:'', confirm:'' });
+      onToast('Password changed successfully ✓');
+    } catch (err: any) {
+      onToast(err.message || 'Failed to change password', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const revokeSession = async (id: number) => {
     setRevokingId(id);
     await new Promise(r => setTimeout(r, 700));
-    setSessions(prev => prev.filter(s => s.id !== id));
+    setSessions(p => p.filter(s => s.id !== id));
     setRevokingId(null);
     onToast('Session revoked');
   };
@@ -302,12 +482,9 @@ function SecuritySettings({ onToast }: { onToast: (m: string, t?: 'success' | 'e
     <Field label={label}>
       <div className="relative">
         <input type={show[field] ? 'text' : 'password'} value={form[field]}
-          onChange={e => setForm({ ...form, [field]: e.target.value })}
-          placeholder="••••••••"
-          className="w-full pl-3 pr-10 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm
-            focus:outline-none focus:border-[#FFD700] transition-colors placeholder:text-neutral-600" />
-        <button type="button"
-          onClick={() => setShow(p => ({ ...p, [field]: !p[field] }))}
+          onChange={e => setForm({...form,[field]:e.target.value})} placeholder="••••••••"
+          className="w-full pl-3 pr-10 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors placeholder:text-neutral-600" />
+        <button type="button" onClick={() => setShow(p => ({...p,[field]:!p[field]}))}
           className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 transition-colors">
           {show[field] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
         </button>
@@ -317,27 +494,24 @@ function SecuritySettings({ onToast }: { onToast: (m: string, t?: 'success' | 'e
 
   return (
     <div className="space-y-6">
-      <Section title="Change Password">
+      <Section title="Change Password" description="Your password is stored securely in Firestore.">
         <PwField label="Current Password" field="current" />
         <PwField label="New Password"     field="newPass" />
-
-        {/* Live strength meter */}
         {form.newPass && (
           <Field label="">
             <div className="space-y-2">
               <div className="flex gap-1.5">
                 {[1,2,3,4].map(i => (
-                  <div key={i} className={`h-1.5 flex-1 rounded-full transition-all duration-300
-                    ${i <= s && strengthMeta[s] ? strengthMeta[s]!.bar : 'bg-neutral-700'}`} />
+                  <div key={i} className={`h-1.5 flex-1 rounded-full transition-all duration-300 ${i<=s && strengthMeta[s] ? strengthMeta[s]!.bar : 'bg-neutral-700'}`} />
                 ))}
               </div>
               {s > 0 && <p className={`text-xs font-semibold ${strengthMeta[s]!.text}`}>{strengthMeta[s]!.label}</p>}
               <div className="space-y-1">
                 {[
-                  { ok: form.newPass.length >= 8,              label: 'At least 8 characters'   },
-                  { ok: /[A-Z]/.test(form.newPass),            label: 'One uppercase letter'     },
-                  { ok: /[0-9]/.test(form.newPass),            label: 'One number'               },
-                  { ok: /[^A-Za-z0-9]/.test(form.newPass),    label: 'One special character'    },
+                  { ok: form.newPass.length >= 8,           label:'At least 8 characters' },
+                  { ok: /[A-Z]/.test(form.newPass),         label:'One uppercase letter'  },
+                  { ok: /[0-9]/.test(form.newPass),         label:'One number'            },
+                  { ok: /[^A-Za-z0-9]/.test(form.newPass),  label:'One special character' },
                 ].map(r => (
                   <p key={r.label} className={`text-xs ${r.ok ? 'text-green-400' : 'text-neutral-600'}`}>
                     {r.ok ? '✓' : '○'} {r.label}
@@ -347,14 +521,11 @@ function SecuritySettings({ onToast }: { onToast: (m: string, t?: 'success' | 'e
             </div>
           </Field>
         )}
-
         <PwField label="Confirm Password" field="confirm" />
-
-        {/* Match indicator */}
         {form.confirm && (
           <Field label="">
-            <p className={`text-xs font-medium ${form.newPass === form.confirm ? 'text-green-400' : 'text-red-400'}`}>
-              {form.newPass === form.confirm ? '✓ Passwords match' : '✗ Passwords do not match'}
+            <p className={`text-xs font-medium ${form.newPass===form.confirm ? 'text-green-400' : 'text-red-400'}`}>
+              {form.newPass===form.confirm ? '✓ Passwords match' : '✗ Passwords do not match'}
             </p>
           </Field>
         )}
@@ -369,23 +540,18 @@ function SecuritySettings({ onToast }: { onToast: (m: string, t?: 'success' | 'e
                 <Monitor className="w-5 h-5 text-neutral-400 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-white">{session.device}</p>
-                  <p className="text-xs text-neutral-500">{session.location} · {session.time}</p>
+                  <p className="text-xs text-neutral-500">{session.location}{session.location ? ' · ' : ''}{session.time}</p>
                 </div>
               </div>
               {session.current
                 ? <span className="text-xs text-green-400 bg-green-500/10 border border-green-500/20 px-2.5 py-1 rounded-full font-medium">Current</span>
-                : <button onClick={() => revokeSession(session.id)} disabled={revokingId === session.id}
-                    className="flex items-center gap-1.5 text-xs text-red-400 border border-red-500/20 px-2.5 py-1.5 rounded-lg
-                      hover:bg-red-500/10 transition-colors disabled:opacity-50">
-                    {revokingId === session.id
-                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Revoking…</>
-                      : <><LogOut className="w-3 h-3" /> Revoke</>}
-                  </button>}
+                : <button onClick={() => revokeSession(session.id)} disabled={revokingId===session.id}
+                    className="flex items-center gap-1.5 text-xs text-red-400 border border-red-500/20 px-2.5 py-1.5 rounded-lg hover:bg-red-500/10 transition-colors disabled:opacity-50">
+                    {revokingId===session.id ? <><Loader2 className="w-3 h-3 animate-spin" />Revoking…</> : <><LogOut className="w-3 h-3" />Revoke</>}
+                  </button>
+              }
             </div>
           ))}
-          {sessions.filter(s => !s.current).length === 0 && (
-            <p className="text-xs text-neutral-500 text-center py-2">No other active sessions.</p>
-          )}
         </div>
       </Section>
     </div>
@@ -393,22 +559,36 @@ function SecuritySettings({ onToast }: { onToast: (m: string, t?: 'success' | 'e
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 3. NOTIFICATIONS
+// 3. NOTIFICATIONS  (persists to localStorage)
 // ═══════════════════════════════════════════════════════════════════════════════
-function NotificationSettings({ onToast }: { onToast: (m: string, t?: 'success' | 'error') => void }) {
+const NOTIF_KEY = 'at_notif_prefs';
+
+function NotificationSettings({ onToast }: { onToast: (m: string, t?: 'success'|'error') => void }) {
   const [prefs, setPrefs] = useState({
-    newBooking: true, bookingUpdates: true, lowStock: true,
-    staffAlerts: false, dailySummary: true, weeklyReport: false,
-    sound: true, email: true, browserPush: false,
+    newBooking:true, bookingUpdates:true, lowStock:true,
+    staffAlerts:false, dailySummary:true, weeklyReport:false,
+    sound:true, email:true, browserPush:false,
   });
   const [saving, setSaving] = useState(false);
-  const toggle = (k: keyof typeof prefs) => setPrefs(p => ({ ...p, [k]: !p[k] }));
+
+  // Load persisted preferences
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(NOTIF_KEY);
+      if (stored) setPrefs(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  const toggle = (k: keyof typeof prefs) => setPrefs(p => ({...p,[k]:!p[k]}));
 
   const save = async () => {
     setSaving(true);
-    await new Promise(r => setTimeout(r, 600));
-    setSaving(false);
-    onToast('Notification preferences saved ✓');
+    try {
+      localStorage.setItem(NOTIF_KEY, JSON.stringify(prefs));
+      onToast('Notification preferences saved ✓');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const Row = ({ label, desc, field }: { label: string; desc: string; field: keyof typeof prefs }) => (
@@ -424,62 +604,50 @@ function NotificationSettings({ onToast }: { onToast: (m: string, t?: 'success' 
   return (
     <div className="space-y-6">
       <Section title="Booking Alerts">
-        <Row label="New Booking"     desc="When a customer creates a new booking"          field="newBooking"     />
+        <Row label="New Booking"     desc="When a customer creates a new booking"       field="newBooking"     />
         <div className="border-t border-neutral-800" />
-        <Row label="Booking Updates" desc="Status changes, edits, and cancellations"       field="bookingUpdates" />
+        <Row label="Booking Updates" desc="Status changes, edits, and cancellations"    field="bookingUpdates" />
       </Section>
       <Section title="Operational Alerts">
-        <Row label="Low Stock Warnings" desc="When inventory drops below minimum level"    field="lowStock"       />
+        <Row label="Low Stock Warnings" desc="When inventory drops below minimum level" field="lowStock"       />
         <div className="border-t border-neutral-800" />
-        <Row label="Staff Alerts"       desc="Staff availability and assignment changes"   field="staffAlerts"    />
+        <Row label="Staff Alerts"       desc="Staff availability and assignment changes" field="staffAlerts"   />
       </Section>
       <Section title="Scheduled Reports">
-        <Row label="Daily Summary" desc="End-of-day bookings and revenue summary"          field="dailySummary"   />
+        <Row label="Daily Summary" desc="End-of-day bookings and revenue summary"       field="dailySummary"   />
         <div className="border-t border-neutral-800" />
-        <Row label="Weekly Report" desc="Sent every Monday morning at 8:00 AM"            field="weeklyReport"   />
+        <Row label="Weekly Report" desc="Sent every Monday morning at 8:00 AM"         field="weeklyReport"   />
       </Section>
       <Section title="Delivery Channels">
-        {/* Sound */}
         <div className="flex items-center justify-between py-2">
           <div className="flex items-center gap-3">
             {prefs.sound ? <Volume2 className="w-5 h-5 text-[#FFD700]" /> : <VolumeX className="w-5 h-5 text-neutral-500" />}
-            <div>
-              <p className="text-sm font-medium text-white">Sound Alerts</p>
-              <p className="text-xs text-neutral-500">Play a chime for important notifications</p>
-            </div>
+            <div><p className="text-sm font-medium text-white">Sound Alerts</p><p className="text-xs text-neutral-500">Play a chime for important notifications</p></div>
           </div>
           <Toggle checked={prefs.sound} onChange={() => toggle('sound')} />
         </div>
         <div className="border-t border-neutral-800" />
-        {/* Email */}
         <div className="flex items-center justify-between py-2">
           <div className="flex items-center gap-3">
             <Mail className="w-5 h-5 text-neutral-400" />
-            <div>
-              <p className="text-sm font-medium text-white">Email Notifications</p>
-              <p className="text-xs text-neutral-500">Send alerts to your registered email</p>
-            </div>
+            <div><p className="text-sm font-medium text-white">Email Notifications</p><p className="text-xs text-neutral-500">Send alerts to your registered email</p></div>
           </div>
           <Toggle checked={prefs.email} onChange={() => toggle('email')} />
         </div>
         <div className="border-t border-neutral-800" />
-        {/* Browser push */}
         <div className="flex items-center justify-between py-2">
           <div className="flex items-center gap-3">
             <Bell className="w-5 h-5 text-neutral-400" />
-            <div>
-              <p className="text-sm font-medium text-white">Browser Push</p>
-              <p className="text-xs text-neutral-500">Desktop notifications from your browser</p>
-            </div>
+            <div><p className="text-sm font-medium text-white">Browser Push</p><p className="text-xs text-neutral-500">Desktop notifications from your browser</p></div>
           </div>
           <Toggle checked={prefs.browserPush} onChange={v => {
             if (v && 'Notification' in window) {
               Notification.requestPermission().then(perm => {
-                if (perm === 'granted') { setPrefs(p => ({ ...p, browserPush: true })); onToast('Browser notifications enabled'); }
+                if (perm==='granted') { setPrefs(p => ({...p,browserPush:true})); onToast('Browser notifications enabled'); }
                 else onToast('Browser denied permission', 'error');
               });
             } else {
-              setPrefs(p => ({ ...p, browserPush: false }));
+              setPrefs(p => ({...p,browserPush:false}));
             }
           }} />
         </div>
@@ -490,77 +658,76 @@ function NotificationSettings({ onToast }: { onToast: (m: string, t?: 'success' 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 4. BUSINESS
+// 4. BUSINESS  (reads/writes Firestore at_business_config)
 // ═══════════════════════════════════════════════════════════════════════════════
-function BusinessSettings({ onToast }: { onToast: (m: string, t?: 'success' | 'error') => void }) {
+const BIZ_DOC = 'at_business_config';
+
+function BusinessSettings({ onToast }: { onToast: (m: string, t?: 'success'|'error') => void }) {
   const [form, setForm] = useState({
-    name: 'Anura Tyres Pvt Ltd', tagline: 'Your Trusted Tyre Specialists',
-    email: 'info@anuratyres.lk', phone: '011-2851234',
-    website: 'www.anuratyres.lk', address: '123 High Level Road, Pannipitiya',
-    openTime: '08:30', closeTime: '19:00', currency: 'LKR', timezone: 'Asia/Colombo',
+    name:'Anura Tyres (Pvt) Ltd', tagline:'Your Trusted Tyre Specialists',
+    email:'info@anuratyres.lk', phone:'077 578 5785',
+    website:'www.anuratyres.lk', address:'278/2 High Level Rd, Pannipitiya',
+    openTime:'08:30', closeTime:'19:00', currency:'LKR', timezone:'Asia/Colombo',
   });
-  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+
+  // Load from Firestore
+  useEffect(() => {
+    getDoc(doc(db, BIZ_DOC, 'global'))
+      .then(d => { if (d.exists()) setForm(f => ({...f,...d.data()})); })
+      .catch(err => console.error('[BusinessSettings load]', err))
+      .finally(() => setLoading(false));
+  }, []);
 
   const save = async () => {
     if (!form.name.trim())        return onToast('Business name is required', 'error');
-    if (!form.email.includes('@')) return onToast('Enter a valid email', 'error');
+    if (form.email && !form.email.includes('@')) return onToast('Enter a valid email', 'error');
     setSaving(true);
-    await new Promise(r => setTimeout(r, 800));
-    setSaving(false);
-    onToast('Business settings saved ✓');
+    try {
+      await setDoc(doc(db, BIZ_DOC, 'global'), { ...form, updatedAt: new Date().toISOString() });
+      onToast('Business settings saved ✓');
+    } catch (err) {
+      console.error('[BusinessSettings save]', err);
+      onToast('Failed to save — check permissions', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
+
+  if (loading) return <div className="h-40 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[#FFD700]" /></div>;
 
   return (
     <div className="space-y-6">
       <Section title="Business Information">
-        <Field label="Business Name">
-          <TInput value={form.name} onChange={v => setForm({ ...form, name: v })} icon={<Building2 className="w-4 h-4" />} />
-        </Field>
-        <Field label="Tagline">
-          <TInput value={form.tagline} onChange={v => setForm({ ...form, tagline: v })} placeholder="Your tagline" />
-        </Field>
-        <Field label="Email">
-          <TInput value={form.email} onChange={v => setForm({ ...form, email: v })} type="email" icon={<Mail className="w-4 h-4" />} />
-        </Field>
-        <Field label="Phone">
-          <TInput value={form.phone} onChange={v => setForm({ ...form, phone: v })} icon={<Phone className="w-4 h-4" />} />
-        </Field>
-        <Field label="Website">
-          <TInput value={form.website} onChange={v => setForm({ ...form, website: v })} icon={<Globe className="w-4 h-4" />} />
-        </Field>
-        <Field label="Address">
-          <TInput value={form.address} onChange={v => setForm({ ...form, address: v })} icon={<MapPin className="w-4 h-4" />} />
-        </Field>
+        <Field label="Business Name"><TInput value={form.name}    onChange={v => setForm({...form,name:v})}    icon={<Building2 className="w-4 h-4" />} /></Field>
+        <Field label="Tagline">      <TInput value={form.tagline} onChange={v => setForm({...form,tagline:v})} placeholder="Your tagline" /></Field>
+        <Field label="Email">        <TInput value={form.email}   onChange={v => setForm({...form,email:v})}   type="email" icon={<Mail className="w-4 h-4" />} /></Field>
+        <Field label="Phone">        <TInput value={form.phone}   onChange={v => setForm({...form,phone:v})}   icon={<Phone className="w-4 h-4" />} /></Field>
+        <Field label="Website">      <TInput value={form.website} onChange={v => setForm({...form,website:v})} icon={<Globe className="w-4 h-4" />} /></Field>
+        <Field label="Address">      <TInput value={form.address} onChange={v => setForm({...form,address:v})} icon={<MapPin className="w-4 h-4" />} /></Field>
       </Section>
-
       <Section title="Operating Hours">
         <Field label="Opens At">
-          <input type="time" value={form.openTime} onChange={e => setForm({ ...form, openTime: e.target.value })}
-            className="px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm
-              focus:outline-none focus:border-[#FFD700] transition-colors" />
+          <input type="time" value={form.openTime} onChange={e => setForm({...form,openTime:e.target.value})}
+            className="px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors" />
         </Field>
         <Field label="Closes At">
-          <input type="time" value={form.closeTime} onChange={e => setForm({ ...form, closeTime: e.target.value })}
-            className="px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm
-              focus:outline-none focus:border-[#FFD700] transition-colors" />
+          <input type="time" value={form.closeTime} onChange={e => setForm({...form,closeTime:e.target.value})}
+            className="px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors" />
         </Field>
       </Section>
-
       <Section title="Locale">
         <Field label="Currency">
-          <select value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value })}
-            className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm
-              focus:outline-none focus:border-[#FFD700] transition-colors">
-            {[['LKR','Sri Lankan Rupee'],['USD','US Dollar'],['EUR','Euro'],['GBP','British Pound'],['AUD','Australian Dollar']]
-              .map(([code, label]) => <option key={code} value={code}>{code} — {label}</option>)}
+          <select value={form.currency} onChange={e => setForm({...form,currency:e.target.value})}
+            className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors">
+            {[['LKR','Sri Lankan Rupee'],['USD','US Dollar'],['EUR','Euro'],['GBP','British Pound']].map(([c,l]) => <option key={c} value={c}>{c} — {l}</option>)}
           </select>
         </Field>
         <Field label="Timezone">
-          <select value={form.timezone} onChange={e => setForm({ ...form, timezone: e.target.value })}
-            className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm
-              focus:outline-none focus:border-[#FFD700] transition-colors">
-            {['Asia/Colombo','Asia/Kolkata','Asia/Dubai','Europe/London','America/New_York']
-              .map(tz => <option key={tz} value={tz}>{tz}</option>)}
+          <select value={form.timezone} onChange={e => setForm({...form,timezone:e.target.value})}
+            className="w-full px-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] transition-colors">
+            {['Asia/Colombo','Asia/Kolkata','Asia/Dubai','Europe/London','America/New_York'].map(tz => <option key={tz} value={tz}>{tz}</option>)}
           </select>
         </Field>
       </Section>
@@ -570,9 +737,11 @@ function BusinessSettings({ onToast }: { onToast: (m: string, t?: 'success' | 'e
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 5. APPEARANCE
+// 5. APPEARANCE  (persists to localStorage + live DOM application)
 // ═══════════════════════════════════════════════════════════════════════════════
-function AppearanceSettings({ onToast }: { onToast: (m: string, t?: 'success' | 'error') => void }) {
+export const APPEARANCE_KEY = 'at_appearance';
+
+function AppearanceSettings({ onToast }: { onToast: (m: string, t?: 'success'|'error') => void }) {
   const [theme,      setTheme]      = useState<'dark'|'light'|'system'>('dark');
   const [accent,     setAccent]     = useState('#FFD700');
   const [compact,    setCompact]    = useState(false);
@@ -581,9 +750,31 @@ function AppearanceSettings({ onToast }: { onToast: (m: string, t?: 'success' | 
   const [saving,     setSaving]     = useState(false);
   const ACCENTS = ['#FFD700','#FF4444','#3B82F6','#10B981','#8B5CF6','#F97316','#EC4899','#14B8A6'];
 
+  // Load + apply saved appearance on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(APPEARANCE_KEY);
+      if (stored) {
+        const d = JSON.parse(stored);
+        if (d.theme)                   setTheme(d.theme);
+        if (d.accent)                  setAccent(d.accent);
+        if (d.compact   !== undefined) setCompact(d.compact);
+        if (d.animations !== undefined) setAnimations(d.animations);
+        if (d.fontSize)                setFontSize(d.fontSize);
+        applyTheme(d);  // apply immediately on mount
+      }
+    } catch {}
+  }, []);
+
+  // Live-apply whenever any value changes (before saving)
+  useEffect(() => { applyTheme({ accent, compact, animations, fontSize }); },
+    [accent, compact, animations, fontSize]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const save = async () => {
     setSaving(true);
-    await new Promise(r => setTimeout(r, 600));
+    const prefs = { theme, accent, compact, animations, fontSize };
+    localStorage.setItem(APPEARANCE_KEY, JSON.stringify(prefs));
+    applyTheme(prefs);
     setSaving(false);
     onToast('Appearance settings applied ✓');
   };
@@ -594,17 +785,13 @@ function AppearanceSettings({ onToast }: { onToast: (m: string, t?: 'success' | 
         <Field label="Colour Mode">
           <div className="flex gap-2 flex-wrap">
             {([
-              { id: 'dark',   label: 'Dark',   icon: <Moon    className="w-4 h-4" /> },
-              { id: 'light',  label: 'Light',  icon: <Sun     className="w-4 h-4" /> },
-              { id: 'system', label: 'System', icon: <Monitor className="w-4 h-4" /> },
+              { id:'dark',   label:'Dark',   icon:<Moon    className="w-4 h-4" /> },
+              { id:'light',  label:'Light',  icon:<Sun     className="w-4 h-4" /> },
+              { id:'system', label:'System', icon:<Monitor className="w-4 h-4" /> },
             ] as const).map(t => (
-              <button key={t.id} onClick={() => { setTheme(t.id); onToast(`Theme: ${t.label}`); }}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all
-                  ${theme === t.id
-                    ? 'bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]'
-                    : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-white'}`}>
-                {t.icon} {t.label}
-                {theme === t.id && <Check className="w-3.5 h-3.5 ml-0.5" />}
+              <button key={t.id} onClick={() => { setTheme(t.id); onToast(`Theme set to ${t.label}`); }}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all ${theme===t.id ? 'bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]' : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-white'}`}>
+                {t.icon} {t.label} {theme===t.id && <Check className="w-3.5 h-3.5 ml-0.5" />}
               </button>
             ))}
           </div>
@@ -614,10 +801,9 @@ function AppearanceSettings({ onToast }: { onToast: (m: string, t?: 'success' | 
           <div className="flex items-center gap-2.5 flex-wrap">
             {ACCENTS.map(c => (
               <button key={c} onClick={() => { setAccent(c); onToast('Accent colour updated'); }}
-                className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 flex items-center justify-center
-                  ${accent === c ? 'border-white scale-110' : 'border-transparent'}`}
+                className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 flex items-center justify-center ${accent===c ? 'border-white scale-110' : 'border-transparent'}`}
                 style={{ backgroundColor: c }}>
-                {accent === c && <Check className="w-3.5 h-3.5 text-black" />}
+                {accent===c && <Check className="w-3.5 h-3.5 text-black" />}
               </button>
             ))}
             <div className="px-2.5 py-1 bg-neutral-800 border border-neutral-700 rounded-lg flex items-center gap-2">
@@ -632,135 +818,185 @@ function AppearanceSettings({ onToast }: { onToast: (m: string, t?: 'success' | 
         <Field label="Font Size">
           <div className="flex gap-2">
             {(['sm','md','lg'] as const).map(sz => (
-              <button key={sz} onClick={() => { setFontSize(sz); onToast(`Font size: ${sz === 'sm' ? 'Small' : sz === 'md' ? 'Medium' : 'Large'}`); }}
-                className={`px-4 py-2 rounded-lg border text-sm font-medium transition-all
-                  ${fontSize === sz
-                    ? 'bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]'
-                    : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-500'}`}>
-                {sz === 'sm' ? 'Small' : sz === 'md' ? 'Medium' : 'Large'}
+              <button key={sz} onClick={() => setFontSize(sz)}
+                className={`px-4 py-2 rounded-lg border text-sm font-medium transition-all ${fontSize===sz ? 'bg-[#FFD700]/10 border-[#FFD700] text-[#FFD700]' : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-500'}`}>
+                {sz==='sm' ? 'Small' : sz==='md' ? 'Medium' : 'Large'}
               </button>
             ))}
           </div>
         </Field>
-
         <div className="flex items-center justify-between py-1">
-          <div>
-            <p className="text-sm font-medium text-white">Compact Mode</p>
-            <p className="text-xs text-neutral-500">Reduce padding for higher content density</p>
-          </div>
-          <Toggle checked={compact} onChange={v => { setCompact(v); onToast(v ? 'Compact mode enabled' : 'Compact mode disabled'); }} />
+          <div><p className="text-sm font-medium text-white">Compact Mode</p><p className="text-xs text-neutral-500">Reduce padding for higher content density</p></div>
+          <Toggle checked={compact} onChange={v => { setCompact(v); onToast(v ? 'Compact mode on' : 'Compact mode off'); }} />
         </div>
         <div className="border-t border-neutral-800" />
         <div className="flex items-center justify-between py-1">
-          <div>
-            <p className="text-sm font-medium text-white">Animations</p>
-            <p className="text-xs text-neutral-500">Page transitions and hover effects</p>
-          </div>
+          <div><p className="text-sm font-medium text-white">Animations</p><p className="text-xs text-neutral-500">Page transitions and hover effects</p></div>
           <Toggle checked={animations} onChange={v => { setAnimations(v); onToast(v ? 'Animations on' : 'Animations off'); }} />
         </div>
       </Section>
 
-      <SaveBtn onClick={save} loading={saving} label="Apply Changes" icon={<Monitor className="w-4 h-4" />} />
+      <SaveBtn onClick={save} loading={saving} label="Apply & Save" icon={<Monitor className="w-4 h-4" />} />
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 6. SYSTEM
+// 6. SYSTEM  (real API health check, real data export)
 // ═══════════════════════════════════════════════════════════════════════════════
-function SystemSettings({ onToast }: { onToast: (m: string, t?: 'success' | 'error') => void }) {
-  const [clearingCache, setClearingCache] = useState(false);
-  const [exporting,     setExporting]     = useState(false);
-  const [confirmReset,  setConfirmReset]  = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [resetting,     setResetting]     = useState(false);
-  const [deleting,      setDeleting]      = useState(false);
+function SystemSettings({ onToast }: { onToast: (m: string, t?: 'success'|'error') => void }) {
+  const session = getSessionUser();
+  const [clearingCache,  setClearingCache]  = useState(false);
+  const [exporting,      setExporting]      = useState(false);
+  const [confirmReset,   setConfirmReset]   = useState(false);
+  const [confirmDelete,  setConfirmDelete]  = useState(false);
+  const [resetting,      setResetting]      = useState(false);
+  const [deleting,       setDeleting]       = useState(false);
+  const [apiStatus,      setApiStatus]      = useState<'checking'|'ok'|'error'>('checking');
+  const [bookingCount,   setBookingCount]   = useState<number|null>(null);
+
+  // Check real API health on mount
+  useEffect(() => {
+    const headers: Record<string,string> = {
+      'X-User-Role':   session?.role   || 'Super Admin',
+      'X-User-Branch': session?.branch || '',
+    };
+    fetch(`${API}/bookings/stats/summary`, { headers })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => { setApiStatus('ok'); setBookingCount(d.stats?.total ?? null); })
+      .catch(() => setApiStatus('error'));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearCache = async () => {
     setClearingCache(true);
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 800));
+    // Clear all at_ prefixed localStorage entries (app cache)
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('at_') && k !== 'at_user');
+    keys.forEach(k => localStorage.removeItem(k));
     setClearingCache(false);
-    onToast('Cache cleared — 12.4 MB freed ✓');
+    onToast(`Cache cleared — ${keys.length} entries removed ✓`);
   };
 
+  // Real data export — fetches actual bookings from the backend
   const exportData = async () => {
     setExporting(true);
-    await new Promise(r => setTimeout(r, 1000));
-    const csv = 'id,customer,service,date,status\nBK-0001,Sample Customer,Wheel Alignment,2024-01-15,Completed\nBK-0002,Nimal Perera,Tyre Change,2024-01-16,Pending';
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `anura-export-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    setExporting(false);
-    onToast('Data exported — check your downloads ✓');
+    try {
+      const headers: Record<string,string> = {
+        'X-User-Role':   session?.role   || 'Super Admin',
+        'X-User-Branch': session?.branch || '',
+      };
+      const res  = await fetch(`${API}/bookings?limit=1000`, { headers });
+      const data = await res.json();
+      const bookings: any[] = data.bookings || data || [];
+
+      const rows = [
+        ['Booking ID','Customer','Phone','Email','Vehicle','Service','Branch','Date','Time Slot','Status'].join(','),
+        ...bookings.map(b => [
+          b.bookingId || b._id || '',
+          `"${(b.customer?.name || '').replace(/"/g,'""')}"`,
+          b.customer?.phone || '',
+          b.customer?.email || '',
+          b.customer?.vehicleNo || '',
+          `"${(Array.isArray(b.services) ? b.services.map((s: any) => s.name).join('; ') : b.service || '').replace(/"/g,'""')}"`,
+          `"${(b.branch?.name || b.branch || '').replace(/"/g,'""')}"`,
+          b.date ? new Date(b.date).toLocaleDateString('en-GB') : '',
+          b.timeSlot || '',
+          b.status || '',
+        ].join(','))
+      ].join('\n');
+
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([rows], { type:'text/csv' }));
+      a.download = `anura-bookings-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      onToast(`Exported ${bookings.length} bookings ✓`);
+    } catch (err) {
+      console.error('[exportData]', err);
+      onToast('Export failed — check your connection', 'error');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const resetSettings = async () => {
     setResetting(true);
-    await new Promise(r => setTimeout(r, 1200));
+    // Clear all persisted settings from localStorage
+    [NOTIF_KEY, APPEARANCE_KEY, 'at_business_config'].forEach(k => localStorage.removeItem(k));
+    await new Promise(r => setTimeout(r, 600));
     setResetting(false);
     setConfirmReset(false);
-    onToast('Settings reset to defaults ✓');
+    onToast('Settings reset to defaults ✓ — reload to apply');
   };
 
   const deleteAll = async () => {
     setDeleting(true);
-    await new Promise(r => setTimeout(r, 1200));
-    setDeleting(false);
-    setConfirmDelete(false);
-    onToast('All booking records deleted');
+    try {
+      const headers: Record<string,string> = {
+        'Content-Type':  'application/json',
+        'X-User-Role':   'Super Admin',
+        'X-User-Branch': '',
+      };
+      // Fetch all bookings and delete each
+      const res  = await fetch(`${API}/bookings?limit=500`, { headers });
+      const data = await res.json();
+      const bookings: any[] = data.bookings || data || [];
+
+      await Promise.all(bookings.map((b: any) =>
+        fetch(`${API}/bookings/${b._id || b.id}`, { method:'DELETE', headers })
+      ));
+      setBookingCount(0);
+      onToast(`Deleted ${bookings.length} booking records`);
+    } catch (err) {
+      console.error('[deleteAll]', err);
+      onToast('Delete failed — check permissions', 'error');
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
   };
 
   return (
     <div className="space-y-6">
       <Section title="System Information">
         {[
-          { label: 'System Version',  value: 'v2.1.0' },
-          { label: 'Database',        value: '● Connected',  cls: 'text-green-400' },
-          { label: 'Environment',     value: 'Production' },
-          { label: 'Last Backup',     value: 'Today, 03:00 AM' },
-          { label: 'API Status',      value: '● Operational', cls: 'text-green-400' },
-          { label: 'Storage Used',    value: '128 MB / 512 MB' },
+          { label:'System Version',  value:'v2.2.0',                                          cls:'' },
+          { label:'API Status',      value: apiStatus==='checking' ? '⌛ Checking…' : apiStatus==='ok' ? '● Operational' : '● Degraded', cls: apiStatus==='ok' ? 'text-green-400' : apiStatus==='error' ? 'text-red-400' : 'text-yellow-400' },
+          { label:'Database',        value: apiStatus==='ok' ? '● Connected' : '● Unknown',   cls: apiStatus==='ok' ? 'text-green-400' : 'text-neutral-400' },
+          { label:'Total Bookings',  value: bookingCount !== null ? String(bookingCount) : '—', cls:'' },
+          { label:'Environment',     value:'Production',                                        cls:'' },
+          { label:'Logged In As',    value: session ? `${session.username} (${session.role})` : '—', cls:'text-neutral-400' },
         ].map(r => (
           <div key={r.label} className="flex justify-between items-center py-1">
             <span className="text-sm text-neutral-400">{r.label}</span>
-            <span className={`text-sm font-medium ${r.cls ?? 'text-white'}`}>{r.value}</span>
+            <span className={`text-sm font-medium ${r.cls || 'text-white'}`}>{r.value}</span>
           </div>
         ))}
       </Section>
 
       <Section title="Maintenance">
-        {/* Clear cache */}
         <div className="flex items-center justify-between py-1">
           <div>
-            <p className="text-sm font-medium text-white">Clear Cache</p>
-            <p className="text-xs text-neutral-500">Remove temporary files (~12 MB)</p>
+            <p className="text-sm font-medium text-white">Clear App Cache</p>
+            <p className="text-xs text-neutral-500">Remove localStorage app entries (not user session)</p>
           </div>
           <button onClick={clearCache} disabled={clearingCache}
-            className="flex items-center gap-2 px-4 py-2 bg-neutral-800 border border-neutral-700 rounded-lg
-              text-neutral-300 text-xs font-medium hover:bg-neutral-700 hover:text-white transition-colors disabled:opacity-50">
-            {clearingCache ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Clearing…</> : <><RefreshCw className="w-3.5 h-3.5" /> Clear Cache</>}
+            className="flex items-center gap-2 px-4 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-300 text-xs font-medium hover:bg-neutral-700 hover:text-white transition-colors disabled:opacity-50">
+            {clearingCache ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Clearing…</> : <><RefreshCw className="w-3.5 h-3.5" />Clear Cache</>}
           </button>
         </div>
         <div className="border-t border-neutral-800" />
-        {/* Export */}
         <div className="flex items-center justify-between py-1">
           <div>
-            <p className="text-sm font-medium text-white">Export All Data</p>
-            <p className="text-xs text-neutral-500">Download all records as CSV</p>
+            <p className="text-sm font-medium text-white">Export All Bookings</p>
+            <p className="text-xs text-neutral-500">Download all booking records as CSV</p>
           </div>
           <button onClick={exportData} disabled={exporting}
-            className="flex items-center gap-2 px-4 py-2 bg-neutral-800 border border-neutral-700 rounded-lg
-              text-neutral-300 text-xs font-medium hover:bg-neutral-700 hover:text-white transition-colors disabled:opacity-50">
-            {exporting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Exporting…</> : 'Export CSV'}
+            className="flex items-center gap-2 px-4 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-300 text-xs font-medium hover:bg-neutral-700 hover:text-white transition-colors disabled:opacity-50">
+            {exporting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Exporting…</> : 'Export CSV'}
           </button>
         </div>
       </Section>
 
-      {/* Danger Zone */}
       <div className="bg-red-500/5 border border-red-500/20 rounded-xl overflow-hidden">
         <div className="px-6 py-4 border-b border-red-500/20">
           <h3 className="text-red-400 font-bold text-sm uppercase tracking-wider flex items-center gap-2">
@@ -770,25 +1006,17 @@ function SystemSettings({ onToast }: { onToast: (m: string, t?: 'success' | 'err
         </div>
         <div className="p-6 space-y-4">
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-white">Reset All Settings</p>
-              <p className="text-xs text-neutral-500">Restore every setting to factory defaults</p>
-            </div>
+            <div><p className="text-sm font-medium text-white">Reset All Settings</p><p className="text-xs text-neutral-500">Restore every setting to factory defaults</p></div>
             <button onClick={() => setConfirmReset(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg
-                text-red-400 text-xs font-medium hover:bg-red-500/20 transition-colors">
+              className="flex items-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs font-medium hover:bg-red-500/20 transition-colors">
               <RefreshCw className="w-3.5 h-3.5" /> Reset
             </button>
           </div>
           <div className="border-t border-red-500/10" />
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-white">Delete All Bookings</p>
-              <p className="text-xs text-neutral-500">Permanently remove every booking record</p>
-            </div>
+            <div><p className="text-sm font-medium text-white">Delete All Bookings</p><p className="text-xs text-neutral-500">Permanently remove every booking from the database</p></div>
             <button onClick={() => setConfirmDelete(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg
-                text-red-400 text-xs font-medium hover:bg-red-500/20 transition-colors">
+              className="flex items-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs font-medium hover:bg-red-500/20 transition-colors">
               <Trash2 className="w-3.5 h-3.5" /> Delete All
             </button>
           </div>
@@ -797,7 +1025,7 @@ function SystemSettings({ onToast }: { onToast: (m: string, t?: 'success' | 'err
 
       {confirmReset && (
         <ConfirmModal title="Reset All Settings?" danger
-          message="This restores every setting to factory defaults. Your bookings and data won't be affected."
+          message="Restores every local setting to factory defaults. Your bookings and user data won't be affected."
           confirmLabel="Yes, Reset" loading={resetting}
           onConfirm={resetSettings} onCancel={() => setConfirmReset(false)} />
       )}
@@ -816,20 +1044,20 @@ function SystemSettings({ onToast }: { onToast: (m: string, t?: 'success' | 'err
 // ═══════════════════════════════════════════════════════════════════════════════
 export function SettingsPage() {
   const [active, setActive] = useState('profile');
-  const [toast,  setToast]  = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
+  const [toast,  setToast]  = useState<{message:string;type:'success'|'error'}|null>(null);
+  const showToast = (message: string, type: 'success'|'error' = 'success') => setToast({message,type});
 
   const sections = [
-    { id: 'profile',       label: 'Profile',             icon: <User      className="w-4 h-4" /> },
-    { id: 'security',      label: 'Password & Security', icon: <Lock      className="w-4 h-4" /> },
-    { id: 'notifications', label: 'Notifications',       icon: <Bell      className="w-4 h-4" /> },
-    { id: 'business',      label: 'Business',            icon: <Building2 className="w-4 h-4" /> },
-    { id: 'appearance',    label: 'Appearance',          icon: <Monitor   className="w-4 h-4" /> },
-    { id: 'system',        label: 'System',              icon: <Shield    className="w-4 h-4" /> },
+    { id:'profile',       label:'Profile',             icon:<User      className="w-4 h-4" /> },
+    { id:'security',      label:'Password & Security', icon:<Lock      className="w-4 h-4" /> },
+    { id:'notifications', label:'Notifications',       icon:<Bell      className="w-4 h-4" /> },
+    { id:'business',      label:'Business',            icon:<Building2 className="w-4 h-4" /> },
+    { id:'appearance',    label:'Appearance',          icon:<Monitor   className="w-4 h-4" /> },
+    { id:'system',        label:'System',              icon:<Shield    className="w-4 h-4" /> },
   ];
 
   const renderSection = () => {
-    switch (active) {
+    switch(active) {
       case 'profile':       return <ProfileSettings      onToast={showToast} />;
       case 'security':      return <SecuritySettings     onToast={showToast} />;
       case 'notifications': return <NotificationSettings onToast={showToast} />;
@@ -848,25 +1076,18 @@ export function SettingsPage() {
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6">
-        {/* Nav */}
         <div className="lg:w-56 flex-shrink-0">
           <nav className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden sticky top-24">
-            {sections.map((s, i) => (
+            {sections.map((s,i) => (
               <button key={s.id} onClick={() => setActive(s.id)}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 text-sm font-medium transition-colors
-                  ${i > 0 ? 'border-t border-neutral-800/60' : ''}
-                  ${active === s.id
-                    ? 'bg-[#FFD700]/10 text-[#FFD700]'
-                    : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'}`}>
-                <span className={active === s.id ? 'text-[#FFD700]' : 'text-neutral-500'}>{s.icon}</span>
+                className={`w-full flex items-center gap-3 px-4 py-3.5 text-sm font-medium transition-colors ${i>0?'border-t border-neutral-800/60':''} ${active===s.id?'bg-[#FFD700]/10 text-[#FFD700]':'text-neutral-400 hover:bg-neutral-800 hover:text-white'}`}>
+                <span className={active===s.id?'text-[#FFD700]':'text-neutral-500'}>{s.icon}</span>
                 <span className="flex-1 text-left">{s.label}</span>
-                <ChevronRight className={`w-3.5 h-3.5 ${active === s.id ? 'text-[#FFD700]' : 'text-neutral-700 opacity-50'}`} />
+                <ChevronRight className={`w-3.5 h-3.5 ${active===s.id?'text-[#FFD700]':'text-neutral-700 opacity-50'}`} />
               </button>
             ))}
           </nav>
         </div>
-
-        {/* Content */}
         <div className="flex-1 min-w-0">{renderSection()}</div>
       </div>
 

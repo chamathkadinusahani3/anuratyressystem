@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { getSessionUser } from '../lib/auth';
 import {
   X, Search, Plus, Wrench, Edit2, Trash2, Phone,
   Eye, EyeOff, KeyRound, Clock, CheckCircle, XCircle,
@@ -28,24 +29,61 @@ async function apiFetch(path: string, opts?: RequestInit) {
 type DayKey = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
 interface DayHours { on: boolean; start: string; end: string; }
 
+interface CurrentJob {
+  service:       string;
+  vehiclePlate:  string;
+  allocatedMins: number;
+  liveWorkMins:  number;
+  liveOverMins:  number;
+  isOvertime:    boolean;
+  status:        string;
+  bayNumber:     string | null;
+}
+
 interface StaffMember {
   id: string;
   name: string;
   role: string;
+  jobTitle: string;
   username: string;
   phone: string;
   branch: string;
   status: 'active' | 'on_break' | 'off';
   bayNumber: string | null;
+  activeBay?: string | null;      // real bay from job assignments
   clockInAt: string | null;
   workingHours?: Record<DayKey, DayHours>;
   skills?: string[];
+  // Real-time from job management
   jobsToday?: number;
+  jobsInProgress?: number;
+  jobsOverdue?: number;
   revenueToday?: number;
+  overtimeHours?: number;
+  efficiencyPct?: number | null;
+  onTimeRate?: number | null;
+  pauseCount?: number;
+  currentJob?: CurrentJob | null;
+  // Derived/enriched
   rating?: number;
   attendanceRate?: number;
-  overtimeHours?: number;
-  baseSalary?: number;
+  baseSalary?: number | null;
+  otRate?: number | null;
+}
+
+interface ServicePrice {
+  id?: string;
+  name: string;
+  code: string;
+  price: number;
+  duration: number;
+}
+
+interface PayrollStats {
+  month: string;
+  totalJobs: number;
+  totalRevenue: number;
+  bookingCount: number;
 }
 
 type LeaveType   = 'Annual Leave' | 'Sick Leave' | 'Break Request' | 'Tomorrow Off';
@@ -70,15 +108,21 @@ interface BayAssignment {
   vehiclePlate: string | null;
   status: 'occupied' | 'available' | 'maintenance';
   startTime: string | null;
+  allocatedMins?: number | null;
+  liveWorkMins?: number;
+  liveOverMins?: number;
+  isOvertime?: boolean;
+  jobStatus?: string | null;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DAYS: DayKey[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const BRANCHES = ['Pannipitiya', 'Ratnapura', 'Kalawana', 'Nivithigala'];
 const PORTAL_ROLES = [
-  { value: 'mechanic',    label: 'Mechanic' },
-  { value: 'supervisor',  label: 'Supervisor' },
-  { value: 'super_admin', label: 'Super Admin' },
+  { value: 'Cashier',     label: 'Cashier' },
+  { value: 'Manager',     label: 'Manager' },
+  { value: 'Admin',       label: 'Admin' },
+  { value: 'Super Admin', label: 'Super Admin' },
 ];
 const STAFF_ROLES = [
   'Sales Executive', 'Branch Assistant', 'Supervisor', 'Branch Manager',
@@ -138,40 +182,57 @@ function rankMedal(i: number) {
   return `#${i + 1}`;
 }
 
-// Mock data generators (used when API doesn't return these fields)
+// Deterministic hash so enriched values don't flicker on re-fetch
+function hashNum(id: string, salt: number): number {
+  let h = salt;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return h;
+}
+
 function enrichStaff(staff: StaffMember[]): StaffMember[] {
-  return staff.map((s, i) => ({
-    ...s,
-    skills: s.skills ?? SKILL_OPTIONS.slice(0, 2 + (i % 4)),
-    jobsToday: s.jobsToday ?? Math.floor(Math.random() * 8) + 1,
-    revenueToday: s.revenueToday ?? Math.floor(Math.random() * 25000) + 5000,
-    rating: s.rating ?? parseFloat((3.5 + Math.random() * 1.5).toFixed(1)),
-    attendanceRate: s.attendanceRate ?? Math.floor(80 + Math.random() * 20),
-    overtimeHours: s.overtimeHours ?? parseFloat((Math.random() * 3).toFixed(1)),
-    baseSalary: s.baseSalary ?? [35000, 42000, 55000, 28000][i % 4],
-  }));
+  return staff.map((s, i) => {
+    const h = (n: number) => hashNum(s.id || String(i), n);
+    return {
+      ...s,
+      skills:        s.skills?.length ? s.skills : SKILL_OPTIONS.slice(0, 2 + (h(1) % 4)),
+      jobsToday:     s.jobsToday     ?? (h(2) % 8) + 1,
+      revenueToday:  s.revenueToday  ?? ((h(3) % 20) + 5) * 1000,
+      rating:        s.rating        ?? parseFloat((3.5 + (h(4) % 15) / 10).toFixed(1)),
+      attendanceRate:s.attendanceRate ?? 80 + (h(5) % 20),
+      overtimeHours: s.overtimeHours ?? parseFloat(((h(6) % 30) / 10).toFixed(1)),
+      baseSalary:    s.baseSalary    ?? [35000, 42000, 55000, 28000][i % 4],
+    };
+  });
 }
 
 function generateBays(staff: StaffMember[]): BayAssignment[] {
-  const activeStaff = staff.filter(s => s.status === 'active');
-  const jobs = ['Tyre Fitting', 'Wheel Alignment', 'Oil Change', 'Brake Service', 'AC Service', 'Balancing', 'Suspension', 'Exhaust Repair'];
-  const plates = ['CAB-1234', 'WP-5678', 'SP-9012', 'NW-3456', 'SGD-7890', 'CP-2345'];
   return Array.from({ length: TOTAL_BAYS }, (_, i) => {
     const bayNum = String(i + 1);
-    const assignedStaff = activeStaff.find(s => s.bayNumber === bayNum);
+    // Find staff whose active job is in this bay (activeBay takes priority over dayStatus bayNumber)
+    const assignedStaff = staff.find(s =>
+      (s.activeBay === bayNum) || (!s.activeBay && s.bayNumber === bayNum && s.status === 'active')
+    );
     if (assignedStaff) {
+      const job = assignedStaff.currentJob ?? null;
       return {
-        bayNumber: bayNum,
-        staffId: assignedStaff.id,
-        staffName: assignedStaff.name,
-        jobTitle: jobs[i % jobs.length],
-        vehiclePlate: plates[i % plates.length],
-        status: 'occupied' as const,
-        startTime: assignedStaff.clockInAt,
+        bayNumber:    bayNum,
+        staffId:      assignedStaff.id,
+        staffName:    assignedStaff.name,
+        jobTitle:     job?.service ?? null,
+        vehiclePlate: job?.vehiclePlate ?? null,
+        status:       'occupied' as const,
+        startTime:    assignedStaff.clockInAt,
+        allocatedMins:job?.allocatedMins   ?? null,
+        liveWorkMins: job?.liveWorkMins    ?? undefined,
+        liveOverMins: job?.liveOverMins    ?? undefined,
+        isOvertime:   job?.isOvertime      ?? false,
+        jobStatus:    job?.status          ?? null,
       };
     }
-    if (i === 5) return { bayNumber: bayNum, staffId: null, staffName: null, jobTitle: null, vehiclePlate: null, status: 'maintenance' as const, startTime: null };
-    return { bayNumber: bayNum, staffId: null, staffName: null, jobTitle: null, vehiclePlate: null, status: 'available' as const, startTime: null };
+    return {
+      bayNumber: bayNum, staffId: null, staffName: null, jobTitle: null,
+      vehiclePlate: null, status: 'available' as const, startTime: null,
+    };
   });
 }
 
@@ -192,83 +253,126 @@ function BayMap({ staff, onAssign }: { staff: StaffMember[]; onAssign: (staffId:
   const [dragStaff, setDragStaff] = useState<StaffMember | null>(null);
   const [hoveredBay, setHoveredBay] = useState<string | null>(null);
 
-  const availableStaff = staff.filter(s => s.status === 'active' && !s.bayNumber);
+  const availableStaff = staff.filter(s => s.status === 'active' && !s.bayNumber && !s.activeBay);
+  const overdueCount   = bays.filter(b => b.isOvertime).length;
 
-  function bayColor(b: BayAssignment) {
-    if (b.status === 'maintenance') return 'border-orange-500/40 bg-orange-500/10';
-    if (b.status === 'occupied') return 'border-emerald-500/40 bg-emerald-500/10';
-    return 'border-neutral-700 bg-neutral-800/50';
+  function bayBorder(b: BayAssignment) {
+    if (b.isOvertime)              return 'border-red-500/60 bg-red-500/5';
+    if (b.jobStatus === 'paused')  return 'border-amber-500/50 bg-amber-500/5';
+    if (b.status === 'occupied')   return 'border-emerald-500/40 bg-emerald-500/5';
+    return 'border-neutral-700 bg-neutral-800/40';
+  }
+
+  function progressBar(b: BayAssignment) {
+    if (!b.allocatedMins || b.liveWorkMins == null) return null;
+    const pct = Math.min((b.liveWorkMins / b.allocatedMins) * 100, 100);
+    const color = b.isOvertime ? 'bg-red-500' : pct > 80 ? 'bg-amber-400' : 'bg-emerald-400';
+    return { pct, color };
   }
 
   return (
     <div className="space-y-5">
       {/* Legend */}
-      <div className="flex items-center gap-4 text-xs">
+      <div className="flex flex-wrap items-center gap-4 text-xs">
         {[
-          { color: 'bg-emerald-500', label: 'Occupied' },
+          { color: 'bg-emerald-500', label: 'Active' },
+          { color: 'bg-amber-500',   label: 'Paused' },
+          { color: 'bg-red-500',     label: 'Overtime' },
           { color: 'bg-neutral-700', label: 'Available' },
-          { color: 'bg-orange-500', label: 'Maintenance' },
         ].map(l => (
           <div key={l.label} className="flex items-center gap-1.5">
             <div className={`w-2.5 h-2.5 rounded-full ${l.color}`} />
             <span className="text-neutral-400">{l.label}</span>
           </div>
         ))}
-        <span className="ml-auto text-neutral-600">{bays.filter(b => b.status === 'occupied').length}/{TOTAL_BAYS} bays active</span>
+        <div className="ml-auto flex items-center gap-3">
+          {overdueCount > 0 && (
+            <span className="flex items-center gap-1 text-red-400 font-semibold">
+              <AlertTriangle className="w-3.5 h-3.5" /> {overdueCount} overdue
+            </span>
+          )}
+          <span className="text-neutral-600">{bays.filter(b => b.status === 'occupied').length}/{TOTAL_BAYS} bays active</span>
+        </div>
       </div>
 
       {/* Bay Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {bays.map(bay => (
-          <div
-            key={bay.bayNumber}
-            onDragOver={e => { e.preventDefault(); setHoveredBay(bay.bayNumber); }}
-            onDragLeave={() => setHoveredBay(null)}
-            onDrop={e => {
-              e.preventDefault();
-              setHoveredBay(null);
-              if (dragStaff && bay.status === 'available') {
-                onAssign(dragStaff.id, bay.bayNumber);
-                setDragStaff(null);
-              }
-            }}
-            className={`relative rounded-xl border-2 p-3.5 transition-all ${bayColor(bay)} ${hoveredBay === bay.bayNumber && bay.status === 'available' ? 'border-[#FFD700] scale-105' : ''}`}
-          >
-            {/* Bay number badge */}
-            <div className="flex items-center justify-between mb-2">
-              <span className="flex items-center gap-1 text-xs font-bold text-neutral-400">
-                <Wrench className="w-3 h-3" /> Bay {bay.bayNumber}
-              </span>
-              {bay.status === 'occupied' && (
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              )}
-              {bay.status === 'maintenance' && (
-                <AlertTriangle className="w-3.5 h-3.5 text-orange-400" />
+        {bays.map(bay => {
+          const bar = progressBar(bay);
+          return (
+            <div
+              key={bay.bayNumber}
+              onDragOver={e => { e.preventDefault(); setHoveredBay(bay.bayNumber); }}
+              onDragLeave={() => setHoveredBay(null)}
+              onDrop={e => {
+                e.preventDefault();
+                setHoveredBay(null);
+                if (dragStaff && bay.status === 'available') {
+                  onAssign(dragStaff.id, bay.bayNumber);
+                  setDragStaff(null);
+                }
+              }}
+              className={`relative rounded-xl border-2 p-3.5 transition-all ${bayBorder(bay)} ${hoveredBay === bay.bayNumber && bay.status === 'available' ? 'border-[#FFD700] scale-105' : ''}`}
+            >
+              {/* Bay header */}
+              <div className="flex items-center justify-between mb-2.5">
+                <span className="flex items-center gap-1 text-xs font-bold text-neutral-400">
+                  <Wrench className="w-3 h-3" /> Bay {bay.bayNumber}
+                </span>
+                {bay.isOvertime && (
+                  <span className="flex items-center gap-0.5 text-[10px] font-bold text-red-400 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded-full">
+                    <AlertTriangle className="w-2.5 h-2.5" /> +{bay.liveOverMins}m
+                  </span>
+                )}
+                {!bay.isOvertime && bay.status === 'occupied' && (
+                  <span className={`w-2 h-2 rounded-full ${bay.jobStatus === 'paused' ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'}`} />
+                )}
+              </div>
+
+              {bay.status === 'occupied' && bay.staffName ? (
+                <>
+                  <div className="text-white text-sm font-semibold leading-tight truncate">{bay.staffName}</div>
+
+                  {bay.jobTitle && (
+                    <div className={`text-xs mt-0.5 truncate font-medium ${bay.isOvertime ? 'text-red-400' : bay.jobStatus === 'paused' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {bay.jobStatus === 'paused' ? '⏸ ' : ''}{bay.jobTitle}
+                    </div>
+                  )}
+
+                  {bay.vehiclePlate && (
+                    <div className="mt-2 px-2 py-0.5 bg-neutral-900/60 rounded text-xs text-neutral-400 font-mono inline-block">
+                      {bay.vehiclePlate}
+                    </div>
+                  )}
+
+                  {/* Live progress bar */}
+                  {bar && (
+                    <div className="mt-2.5 space-y-1">
+                      <div className="flex justify-between text-[10px] text-neutral-500">
+                        <span>{bay.liveWorkMins}m used</span>
+                        <span>{bay.allocatedMins}m allocated</span>
+                      </div>
+                      <div className="h-1.5 bg-neutral-800 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${bar.color}`} style={{ width: `${bar.pct}%` }} />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Fallback elapsed time if no job data */}
+                  {!bar && bay.startTime && (
+                    <div className="mt-1.5 flex items-center gap-1 text-neutral-500 text-xs">
+                      <Timer className="w-3 h-3" /> {getElapsed(bay.startTime)}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-neutral-600 text-xs italic mt-1">
+                  {hoveredBay === bay.bayNumber ? '⬇ Drop mechanic here' : 'Available'}
+                </div>
               )}
             </div>
-
-            {bay.status === 'occupied' && bay.staffName ? (
-              <>
-                <div className="text-white text-sm font-semibold leading-tight truncate">{bay.staffName}</div>
-                <div className="text-emerald-400 text-xs mt-0.5 truncate">{bay.jobTitle}</div>
-                {bay.vehiclePlate && (
-                  <div className="mt-2 px-2 py-0.5 bg-neutral-900/60 rounded text-xs text-neutral-400 font-mono inline-block">{bay.vehiclePlate}</div>
-                )}
-                {bay.startTime && (
-                  <div className="mt-1 flex items-center gap-1 text-neutral-500 text-xs">
-                    <Timer className="w-3 h-3" /> {getElapsed(bay.startTime)}
-                  </div>
-                )}
-              </>
-            ) : bay.status === 'maintenance' ? (
-              <div className="text-orange-400 text-xs font-medium mt-1">Under Maintenance</div>
-            ) : (
-              <div className="text-neutral-600 text-xs italic mt-1">
-                {hoveredBay === bay.bayNumber ? '⬇ Drop mechanic here' : 'Available'}
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Draggable Staff Pool */}
@@ -289,7 +393,10 @@ function BayMap({ staff, onAssign }: { staff: StaffMember[]; onAssign: (staffId:
                 <div className="w-5 h-5 rounded-full bg-[#FFD700]/20 flex items-center justify-center text-[#FFD700] text-[10px] font-bold">
                   {s.name.charAt(0)}
                 </div>
-                {s.name.split(' ')[0]}
+                <span>{s.name.split(' ')[0]}</span>
+                {(s.jobsInProgress ?? 0) > 0 && (
+                  <span className="text-[10px] text-blue-400">· {s.jobsInProgress} active</span>
+                )}
               </div>
             ))}
           </div>
@@ -301,13 +408,14 @@ function BayMap({ staff, onAssign }: { staff: StaffMember[]; onAssign: (staffId:
 
 // ── PERFORMANCE LEADERBOARD ───────────────────────────────────────────────────
 function Leaderboard({ staff }: { staff: StaffMember[] }) {
-  const [metric, setMetric] = useState<'jobsToday' | 'revenueToday' | 'rating' | 'attendanceRate'>('jobsToday');
+  const [metric, setMetric] = useState<'jobsToday' | 'revenueToday' | 'efficiencyPct' | 'rating' | 'attendanceRate'>('jobsToday');
 
   const metrics = [
-    { key: 'jobsToday',      label: 'Jobs Done',   icon: <Target className="w-3.5 h-3.5" />, fmt: (v: number) => `${v}` },
-    { key: 'revenueToday',   label: 'Revenue',     icon: <DollarSign className="w-3.5 h-3.5" />, fmt: (v: number) => `Rs ${v.toLocaleString()}` },
-    { key: 'rating',         label: 'Rating',      icon: <Star className="w-3.5 h-3.5" />, fmt: (v: number) => `${v.toFixed(1)} ★` },
-    { key: 'attendanceRate', label: 'Attendance',  icon: <Activity className="w-3.5 h-3.5" />, fmt: (v: number) => `${v}%` },
+    { key: 'jobsToday',      label: 'Jobs Done',   icon: <Target className="w-3.5 h-3.5" />,     fmt: (v: number) => `${v}`,                   real: true  },
+    { key: 'revenueToday',   label: 'Revenue',     icon: <DollarSign className="w-3.5 h-3.5" />, fmt: (v: number) => `Rs ${v.toLocaleString()}`, real: true  },
+    { key: 'efficiencyPct',  label: 'Efficiency',  icon: <Zap className="w-3.5 h-3.5" />,        fmt: (v: number) => `${v}%`,                   real: true  },
+    { key: 'rating',         label: 'Rating',      icon: <Star className="w-3.5 h-3.5" />,        fmt: (v: number) => `${v.toFixed(1)} ★`,       real: false },
+    { key: 'attendanceRate', label: 'Attendance',  icon: <Activity className="w-3.5 h-3.5" />,   fmt: (v: number) => `${v}%`,                   real: false },
   ] as const;
 
   const activeMetric = metrics.find(m => m.key === metric)!;
@@ -317,14 +425,15 @@ function Leaderboard({ staff }: { staff: StaffMember[] }) {
   return (
     <div className="space-y-4">
       {/* Metric switcher */}
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex gap-2 flex-wrap items-center">
         {metrics.map(m => (
           <button
             key={m.key}
-            onClick={() => setMetric(m.key)}
+            onClick={() => setMetric(m.key as typeof metric)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${metric === m.key ? 'bg-[#FFD700] text-black border-[#FFD700]' : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-white'}`}
           >
             {m.icon} {m.label}
+            {m.real && <span className="text-[8px] font-bold px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded ml-0.5">LIVE</span>}
           </button>
         ))}
       </div>
@@ -380,55 +489,387 @@ function Leaderboard({ staff }: { staff: StaffMember[] }) {
   );
 }
 
-// ── PAYROLL PANEL ─────────────────────────────────────────────────────────────
-function PayrollPanel({ staff }: { staff: StaffMember[] }) {
-  const [selectedMonth] = useState(new Date().toLocaleString('en-GB', { month: 'long', year: 'numeric' }));
+// ── MODAL: Service Prices ─────────────────────────────────────────────────────
+function ServicePricesModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [prices, setPrices] = useState<ServicePrice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+  const [error,   setError]   = useState('');
 
-  const OT_RATE = 150; // Rs per hour overtime
+  useEffect(() => {
+    apiFetch('/api/staff?resource=service-prices')
+      .then(data => setPrices(Array.isArray(data) ? data : []))
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const update = (idx: number, patch: Partial<ServicePrice>) =>
+    setPrices(prev => prev.map((p, i) => i === idx ? { ...p, ...patch } : p));
+
+  const add = () =>
+    setPrices(prev => [...prev, { name: '', code: '', price: 0, duration: 30 }]);
+
+  const remove = (idx: number) =>
+    setPrices(prev => prev.filter((_, i) => i !== idx));
+
+  const save = async () => {
+    const invalid = prices.find(p => !p.name.trim());
+    if (invalid) { setError('All service names are required.'); return; }
+    setSaving(true); setError('');
+    try {
+      await apiFetch('/api/staff?resource=service-prices', {
+        method: 'PUT',
+        body: JSON.stringify({ prices }),
+      });
+      onSaved(); onClose();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+      <div className="bg-neutral-900 rounded-2xl border border-neutral-700 w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[#FFD700]/10 flex items-center justify-center">
+              <DollarSign className="w-4 h-4 text-[#FFD700]" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-white">Service Prices</h2>
+              <p className="text-xs text-neutral-500">Used to calculate branch revenue from completed bookings</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-neutral-500 hover:text-white hover:bg-neutral-800 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-3">
+          {error && <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">{error}</div>}
+
+          {loading ? (
+            <div className="flex items-center justify-center py-12 gap-2 text-neutral-500 text-sm">
+              <div className="w-4 h-4 border-2 border-neutral-700 border-t-[#FFD700] rounded-full animate-spin" />
+              Loading…
+            </div>
+          ) : (
+            <>
+              {/* Column headers */}
+              <div className="grid grid-cols-12 gap-2 px-1">
+                <span className="col-span-5 text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Service Name</span>
+                <span className="col-span-2 text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Code</span>
+                <span className="col-span-2 text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Price (Rs)</span>
+                <span className="col-span-2 text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Mins</span>
+                <span className="col-span-1" />
+              </div>
+
+              {prices.map((p, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                  <div className="col-span-5">
+                    <Input
+                      value={p.name}
+                      onChange={e => update(i, { name: e.target.value })}
+                      placeholder="e.g. Wheel Alignment"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <Input
+                      value={p.code}
+                      onChange={e => update(i, { code: e.target.value.toUpperCase() })}
+                      placeholder="AL"
+                      maxLength={4}
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <Input
+                      type="number"
+                      min={0}
+                      value={p.price}
+                      onChange={e => update(i, { price: Number(e.target.value) })}
+                      placeholder="2500"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <Input
+                      type="number"
+                      min={0}
+                      value={p.duration}
+                      onChange={e => update(i, { duration: Number(e.target.value) })}
+                      placeholder="60"
+                    />
+                  </div>
+                  <div className="col-span-1 flex justify-center">
+                    <button
+                      onClick={() => remove(i)}
+                      className="p-1.5 text-neutral-600 hover:text-red-400 transition-colors rounded-lg hover:bg-red-500/10"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              <button
+                onClick={add}
+                className="w-full flex items-center justify-center gap-2 py-2.5 border border-dashed border-neutral-700 rounded-xl text-neutral-500 hover:text-white hover:border-neutral-500 text-sm transition-colors"
+              >
+                <Plus className="w-4 h-4" /> Add Service
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-3 px-6 py-4 border-t border-neutral-800 flex-shrink-0">
+          <button onClick={onClose} className="flex-1 px-4 py-2.5 border border-neutral-700 rounded-xl text-neutral-300 text-sm font-medium hover:bg-neutral-800 transition-colors">
+            Cancel
+          </button>
+          <button onClick={save} disabled={saving || loading} className="flex-1 px-4 py-2.5 bg-[#FFD700] rounded-xl text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
+            {saving ? <><div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" /> Saving…</> : 'Save Prices'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── MODAL: Edit Salary ────────────────────────────────────────────────────────
+function SalaryModal({ member, onClose, onSaved }: { member: StaffMember; onClose: () => void; onSaved: () => void }) {
+  const DEFAULT_OT = 150;
+  const [baseSalary, setBaseSalary] = useState(String(member.baseSalary ?? ''));
+  const [otRate,     setOtRate]     = useState(String(member.otRate     ?? DEFAULT_OT));
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState('');
+
+  const save = async () => {
+    if (!baseSalary || Number(baseSalary) < 0) { setError('Enter a valid base salary'); return; }
+    setLoading(true); setError('');
+    try {
+      await apiFetch('/api/staff?action=update-salary', {
+        method: 'POST',
+        body: JSON.stringify({
+          id:         member.id,
+          baseSalary: Number(baseSalary),
+          otRate:     Number(otRate) || DEFAULT_OT,
+        }),
+      });
+      onSaved(); onClose();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const base   = Number(baseSalary) || 0;
+  const ot     = Number(otRate)     || DEFAULT_OT;
+  const epf    = Math.round(base * 0.08);
+  const etf    = Math.round(base * 0.03);
+  const net    = base - epf;
+
+  return (
+    <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+      <div className="bg-neutral-900 rounded-2xl border border-neutral-700 w-full max-w-sm shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-[#FFD700]/20 flex items-center justify-center text-[#FFD700] font-bold text-sm">
+              {member.name.charAt(0)}
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-white">{member.name}</h2>
+              <p className="text-xs text-neutral-500">{member.jobTitle || member.role}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-neutral-500 hover:text-white hover:bg-neutral-800 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {error && <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">{error}</div>}
+
+          <div>
+            <Label>Base Salary (Rs / month) *</Label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 text-sm font-medium">Rs</span>
+              <Input
+                type="number"
+                min={0}
+                value={baseSalary}
+                onChange={e => setBaseSalary(e.target.value)}
+                placeholder="e.g. 45000"
+                className="pl-9"
+              />
+            </div>
+          </div>
+
+          <div>
+            <Label>OT Rate (Rs / hour)</Label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 text-sm font-medium">Rs</span>
+              <Input
+                type="number"
+                min={0}
+                value={otRate}
+                onChange={e => setOtRate(e.target.value)}
+                placeholder={String(DEFAULT_OT)}
+                className="pl-9"
+              />
+            </div>
+            <p className="text-xs text-neutral-600 mt-1">Per hour rate for overtime work</p>
+          </div>
+
+          {/* Live preview */}
+          {base > 0 && (
+            <div className="p-4 bg-neutral-800/60 border border-neutral-700 rounded-xl space-y-2">
+              <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-3">Monthly Estimate</p>
+              {[
+                { label: 'Base Salary',   value: `Rs ${base.toLocaleString()}`,  color: 'text-neutral-200' },
+                { label: 'EPF (8%)',      value: `−Rs ${epf.toLocaleString()}`,  color: 'text-red-400' },
+                { label: 'ETF (3%)',      value: `Rs ${etf.toLocaleString()}`,   color: 'text-blue-400 text-xs opacity-60' },
+              ].map(row => (
+                <div key={row.label} className="flex justify-between items-center">
+                  <span className="text-neutral-500 text-xs">{row.label}</span>
+                  <span className={`text-xs font-medium ${row.color}`}>{row.value}</span>
+                </div>
+              ))}
+              <div className="border-t border-neutral-700 pt-2 flex justify-between">
+                <span className="text-white text-xs font-bold">Net Take-Home</span>
+                <span className="text-emerald-400 font-bold text-sm">Rs {net.toLocaleString()}</span>
+              </div>
+              {ot > 0 && (
+                <p className="text-xs text-amber-400/70 pt-1">+ Rs {ot}/hr OT on overtime hours</p>
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-1">
+            <button onClick={onClose} className="flex-1 px-4 py-2.5 border border-neutral-700 rounded-xl text-neutral-300 text-sm font-medium hover:bg-neutral-800 transition-colors">
+              Cancel
+            </button>
+            <button onClick={save} disabled={loading} className="flex-1 px-4 py-2.5 bg-[#FFD700] rounded-xl text-black text-sm font-bold hover:bg-[#FFD700]/90 transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
+              {loading ? <><div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" /> Saving…</> : 'Save Salary'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── PAYROLL PANEL ─────────────────────────────────────────────────────────────
+function PayrollPanel({
+  staff, servicePrices, payrollStats, onEditSalary, onManagePrices, currentMonth, onMonthChange,
+}: {
+  staff: StaffMember[];
+  servicePrices: ServicePrice[];
+  payrollStats: PayrollStats | null;
+  onEditSalary: (m: StaffMember) => void;
+  onManagePrices: () => void;
+  currentMonth: string;
+  onMonthChange: (m: string) => void;
+}) {
+  const DEFAULT_OT_RATE  = 150;
+  const DEFAULT_SALARY   = 35000;
+
+  // Per-staff revenue share — real branch revenue divided equally across staff
+  const staffCount       = staff.length || 1;
+  const branchRevenue    = payrollStats?.totalRevenue ?? 0;
+  const revenuePerStaff  = staffCount > 0 ? Math.round(branchRevenue / staffCount) : 0;
+  const hasPriceData     = servicePrices.length > 0;
 
   function calcPayroll(s: StaffMember) {
-    const base = s.baseSalary ?? 35000;
-    const otPay = (s.overtimeHours ?? 0) * OT_RATE * 8; // daily rate
-    const deductions = Math.round(base * 0.08); // 8% EPF employee
-    const gross = base + otPay;
-    const net = gross - deductions;
-    return { base, otPay: Math.round(otPay), deductions, gross: Math.round(gross), net: Math.round(net) };
+    const base       = s.baseSalary ?? DEFAULT_SALARY;
+    const rate       = s.otRate     ?? DEFAULT_OT_RATE;
+    const otHours    = s.overtimeHours ?? 0;
+    const otPay      = Math.round(otHours * rate);
+    const epf        = Math.round(base * 0.08);
+    const gross      = base + otPay;
+    const net        = gross - epf;
+    const hasSalary  = s.baseSalary !== null && s.baseSalary !== undefined;
+    return { base, rate, otHours, otPay, epf, gross, net, hasSalary };
   }
 
-  const totalGross = staff.reduce((acc, s) => acc + calcPayroll(s).gross, 0);
-  const totalNet   = staff.reduce((acc, s) => acc + calcPayroll(s).net, 0);
+  const totalNet   = staff.reduce((a, s) => a + calcPayroll(s).net, 0);
+  const totalGross = staff.reduce((a, s) => a + calcPayroll(s).gross, 0);
+  const monthLabel = new Date(currentMonth + '-01').toLocaleString('en-GB', { month: 'long', year: 'numeric' });
 
   return (
     <div className="space-y-5">
-      {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-3">
+      {/* ── Top controls ── */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <input
+            type="month"
+            value={currentMonth}
+            onChange={e => onMonthChange(e.target.value)}
+            className="px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-xl text-white text-sm focus:outline-none focus:border-[#FFD700]"
+          />
+          {payrollStats && (
+            <div className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-400">
+              <CheckCircle className="w-3.5 h-3.5" />
+              {payrollStats.bookingCount} completed bookings · Rs {payrollStats.totalRevenue.toLocaleString()} revenue
+            </div>
+          )}
+          {!hasPriceData && (
+            <div className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-400">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Set service prices for real revenue
+            </div>
+          )}
+        </div>
+        <button
+          onClick={onManagePrices}
+          className="flex items-center gap-2 px-4 py-2 bg-neutral-800 border border-neutral-700 rounded-xl text-neutral-300 text-sm font-medium hover:bg-neutral-700 transition-colors"
+        >
+          <Settings className="w-3.5 h-3.5 text-[#FFD700]" /> Manage Service Prices
+        </button>
+      </div>
+
+      {/* ── Summary cards ── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Total Staff', value: staff.length, icon: <Users className="w-4 h-4" />, color: 'text-white' },
-          { label: 'Gross Payroll', value: `Rs ${(totalGross / 1000).toFixed(0)}k`, icon: <DollarSign className="w-4 h-4" />, color: 'text-[#FFD700]' },
-          { label: 'Net Payroll',  value: `Rs ${(totalNet / 1000).toFixed(0)}k`, icon: <TrendingUp className="w-4 h-4" />, color: 'text-emerald-400' },
+          { label: 'Total Staff',    value: String(staff.length),                         sub: 'on roster',            icon: <Users className="w-4 h-4" />,     color: 'text-white',       badge: '' },
+          { label: 'Branch Revenue', value: `Rs ${(branchRevenue / 1000).toFixed(1)}k`,   sub: hasPriceData ? 'from bookings' : 'set prices first', icon: <TrendingUp className="w-4 h-4" />, color: 'text-emerald-400', badge: hasPriceData ? 'Real' : '' },
+          { label: 'Gross Payroll',  value: `Rs ${(totalGross / 1000).toFixed(0)}k`,      sub: 'base + OT',            icon: <DollarSign className="w-4 h-4" />, color: 'text-[#FFD700]',  badge: '' },
+          { label: 'Net Payroll',    value: `Rs ${(totalNet / 1000).toFixed(0)}k`,        sub: 'after EPF deductions', icon: <CheckCircle className="w-4 h-4" />, color: 'text-blue-400',  badge: '' },
         ].map(c => (
           <div key={c.label} className="bg-neutral-800/60 border border-neutral-700 rounded-xl p-3.5">
-            <div className={`mb-1.5 ${c.color} opacity-60`}>{c.icon}</div>
+            <div className="flex items-center justify-between mb-1.5">
+              <div className={`${c.color} opacity-60`}>{c.icon}</div>
+              {c.badge && <span className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full border border-emerald-500/30">{c.badge}</span>}
+            </div>
             <div className={`text-xl font-bold ${c.color}`}>{c.value}</div>
             <div className="text-neutral-500 text-xs mt-0.5">{c.label}</div>
+            <div className="text-neutral-700 text-[10px]">{c.sub}</div>
           </div>
         ))}
       </div>
 
-      {/* Payroll table */}
+      {/* ── Payroll table ── */}
       <div className="rounded-xl border border-neutral-800 overflow-hidden">
         <div className="px-4 py-3 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between">
-          <span className="text-xs font-bold text-neutral-400 uppercase tracking-wider">{selectedMonth} — Payroll Summary</span>
-          <button className="flex items-center gap-1.5 text-xs text-neutral-500 hover:text-[#FFD700] transition-colors">
-            <Download className="w-3.5 h-3.5" /> Export
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-neutral-400 uppercase tracking-wider">{monthLabel} — Payroll</span>
+            <span className="text-[10px] text-neutral-600">(Revenue split equally across staff)</span>
+          </div>
+          <div className="flex items-center gap-2 text-amber-400/70 text-[10px]">
+            <AlertTriangle className="w-3 h-3" /> Estimates — verify with HR
+          </div>
         </div>
+
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-neutral-800">
-                {['Staff', 'Base', 'OT Hours', 'OT Pay', 'Deductions', 'Net Pay'].map(h => (
-                  <th key={h} className={`px-4 py-2.5 text-left text-neutral-500 font-semibold uppercase tracking-wider ${h === 'Net Pay' ? 'text-right' : ''}`}>{h}</th>
+              <tr className="bg-neutral-900/60 border-b border-neutral-800">
+                {['Staff', 'Base Salary', 'OT (hrs)', 'OT Pay', 'Rev. Share', 'EPF (8%)', 'Net Pay', ''].map(h => (
+                  <th key={h} className={`px-3 py-2.5 text-left text-neutral-500 font-semibold uppercase tracking-wider whitespace-nowrap ${h === 'Net Pay' ? 'text-right' : ''}`}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -437,37 +878,65 @@ function PayrollPanel({ staff }: { staff: StaffMember[] }) {
                 const p = calcPayroll(s);
                 return (
                   <tr key={s.id} className="hover:bg-neutral-800/30 transition-colors">
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3">
                       <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-neutral-700 flex items-center justify-center text-[#FFD700] text-[10px] font-bold">
+                        <div className="w-7 h-7 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center text-[#FFD700] text-[10px] font-bold flex-shrink-0">
                           {s.name.charAt(0)}
                         </div>
                         <div>
-                          <div className="text-white font-medium">{s.name}</div>
-                          <div className="text-neutral-600">{s.role || 'Staff'}</div>
+                          <div className="text-white font-medium whitespace-nowrap">{s.name}</div>
+                          <div className="text-neutral-600 text-[10px]">{s.jobTitle || s.role}</div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-neutral-300">Rs {p.base.toLocaleString()}</td>
-                    <td className="px-4 py-3">
-                      <span className={`${(s.overtimeHours ?? 0) > 0 ? 'text-amber-400' : 'text-neutral-600'}`}>
-                        {(s.overtimeHours ?? 0).toFixed(1)}h
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-1.5">
+                        {p.hasSalary
+                          ? <span className="text-neutral-200 font-medium">Rs {p.base.toLocaleString()}</span>
+                          : <span className="text-amber-400/70 italic text-[10px]">Not set</span>
+                        }
+                      </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <span className={p.otHours > 0 ? 'text-amber-400' : 'text-neutral-600'}>
+                        {p.otHours.toFixed(1)}h
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-amber-400">{p.otPay > 0 ? `+Rs ${p.otPay.toLocaleString()}` : '—'}</td>
-                    <td className="px-4 py-3 text-red-400">−Rs {p.deductions.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="text-emerald-400 font-bold">Rs {p.net.toLocaleString()}</span>
+                    <td className="px-3 py-3 text-amber-400">
+                      {p.otPay > 0 ? `+Rs ${p.otPay.toLocaleString()}` : '—'}
+                    </td>
+                    <td className="px-3 py-3">
+                      {hasPriceData
+                        ? <span className="text-emerald-400 font-medium">Rs {revenuePerStaff.toLocaleString()}</span>
+                        : <span className="text-neutral-600 text-[10px]">Set prices</span>
+                      }
+                    </td>
+                    <td className="px-3 py-3 text-red-400">−Rs {p.epf.toLocaleString()}</td>
+                    <td className="px-3 py-3 text-right">
+                      <span className={`font-bold ${p.hasSalary ? 'text-emerald-400' : 'text-neutral-600'}`}>
+                        {p.hasSalary ? `Rs ${p.net.toLocaleString()}` : '—'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3">
+                      <button
+                        onClick={() => onEditSalary(s)}
+                        title="Edit salary"
+                        className={`p-1.5 rounded-lg transition-colors text-xs flex items-center gap-1 ${p.hasSalary ? 'text-neutral-500 hover:text-[#FFD700] hover:bg-[#FFD700]/10' : 'text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-lg hover:bg-amber-500/20'}`}
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        {!p.hasSalary && <span>Set</span>}
+                      </button>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
             <tfoot>
-              <tr className="border-t border-neutral-700 bg-neutral-900">
-                <td className="px-4 py-3 text-neutral-400 font-bold text-xs">TOTAL</td>
-                <td colSpan={4} className="px-4 py-3" />
-                <td className="px-4 py-3 text-right text-[#FFD700] font-bold">Rs {totalNet.toLocaleString()}</td>
+              <tr className="border-t border-neutral-700 bg-neutral-900/80">
+                <td className="px-3 py-3 text-neutral-400 font-bold uppercase tracking-wider">Total</td>
+                <td colSpan={5} className="px-3 py-3" />
+                <td className="px-3 py-3 text-right text-[#FFD700] font-bold text-sm">Rs {totalNet.toLocaleString()}</td>
+                <td />
               </tr>
             </tfoot>
           </table>
@@ -511,7 +980,8 @@ function AddStaffModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
           username:     form.username.trim().toLowerCase(),
           password:     form.password,
           name:         form.name.trim(),
-          role:         form.portalRole,
+          role:         form.portalRole,          // portal access level
+          jobTitle:     form.role || form.portalRole, // display job title
           branch:       form.branch,
           phone:        form.phone.trim(),
           skills:       form.skills,
@@ -679,12 +1149,13 @@ function AddStaffModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
 // ── MODAL: Edit Staff ─────────────────────────────────────────────────────────
 function EditStaffModal({ member, onClose, onSuccess }: { member: StaffMember; onClose: () => void; onSuccess: () => void }) {
   const [form, setForm] = useState({
-    name:     member.name,
-    role:     member.role,
-    branch:   member.branch,
-    phone:    member.phone,
-    password: '',
-    skills:   member.skills ?? [],
+    name:       member.name,
+    jobTitle:   member.jobTitle || member.role,
+    portalRole: member.role,
+    branch:     member.branch,
+    phone:      member.phone,
+    password:   '',
+    skills:     member.skills ?? [],
   });
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
@@ -706,7 +1177,8 @@ function EditStaffModal({ member, onClose, onSuccess }: { member: StaffMember; o
         body: JSON.stringify({
           id:       member.id,
           name:     form.name.trim(),
-          role:     form.role,
+          role:     form.portalRole,
+          jobTitle: form.jobTitle.trim() || form.portalRole,
           branch:   form.branch,
           phone:    form.phone.trim(),
           skills:   form.skills,
@@ -744,12 +1216,18 @@ function EditStaffModal({ member, onClose, onSuccess }: { member: StaffMember; o
             <Label>Full Name *</Label>
             <Input value={form.name} onChange={e => set('name', e.target.value)} />
           </div>
+          <div>
+            <Label>Job Title</Label>
+            <Select value={form.jobTitle} onChange={e => set('jobTitle', e.target.value)}>
+              <option value="">Select…</option>
+              {STAFF_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+            </Select>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label>Role</Label>
-              <Select value={form.role} onChange={e => set('role', e.target.value)}>
-                <option value="">Select…</option>
-                {STAFF_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              <Label>Portal Access Level</Label>
+              <Select value={form.portalRole} onChange={e => set('portalRole', e.target.value)}>
+                {PORTAL_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </Select>
             </div>
             <div>
@@ -914,7 +1392,7 @@ function StaffProfileDrawer({ member, onClose }: { member: StaffMember; onClose:
             </div>
             <div>
               <h3 className="text-white text-xl font-bold">{member.name}</h3>
-              <p className="text-neutral-400 text-sm">{member.role || 'Staff Member'}</p>
+              <p className="text-neutral-400 text-sm">{member.jobTitle || member.role || 'Staff Member'}</p>
               <p className="text-neutral-600 text-xs font-mono mt-0.5">@{member.username}</p>
             </div>
           </div>
@@ -1018,11 +1496,17 @@ async function patchStatus(staffId: string, action: string, branch: string, date
 
 // ── MAIN PAGE ─────────────────────────────────────────────────────────────────
 export function StaffPage() {
+  const sessionUser = getSessionUser();
+  const defaultBranch =
+    sessionUser && !['Super Admin', 'Admin'].includes(sessionUser.role) && sessionUser.branch
+      ? sessionUser.branch
+      : BRANCHES[0];
+
   const [staff,          setStaff]          = useState<StaffMember[]>([]);
   const [enriched,       setEnriched]       = useState<StaffMember[]>([]);
   const [loading,        setLoading]        = useState(true);
   const [error,          setError]          = useState<string | null>(null);
-  const [branch,         setBranch]         = useState(BRANCHES[0]);
+  const [branch,         setBranch]         = useState(defaultBranch);
   const [search,         setSearch]         = useState('');
   const [activeTab,      setActiveTab]      = useState<'directory' | 'bays' | 'performance' | 'payroll' | 'leaves'>('directory');
   const [showAdd,        setShowAdd]        = useState(false);
@@ -1033,6 +1517,11 @@ export function StaffPage() {
   const [leaveFilter,    setLeaveFilter]    = useState<LeaveStatus | 'All'>('All');
   const [leaveRequests,  setLeaveRequests]  = useState<LeaveRequest[]>([]);
   const [clockTick,      setClockTick]      = useState(0);
+  const [servicePrices,  setServicePrices]  = useState<ServicePrice[]>([]);
+  const [payrollStats,   setPayrollStats]   = useState<PayrollStats | null>(null);
+  const [showPricesModal,setShowPricesModal]= useState(false);
+  const [salaryTarget,   setSalaryTarget]   = useState<StaffMember | null>(null);
+  const [currentMonth,   setCurrentMonth]   = useState(() => new Date().toISOString().slice(0, 7));
   const today = todayStr();
 
   // Live clock tick every minute to refresh elapsed times
@@ -1044,26 +1533,53 @@ export function StaffPage() {
   const fetchStaff = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const data: any[] = await apiFetch(`/api/staff?branch=${encodeURIComponent(branch)}&date=${today}`);
-      const mapped: StaffMember[] = data.map((m: any) => ({
-        id:        String(m._id || m.id),
-        name:      m.name || '',
-        role:      m.role || '',
-        username:  m.username || '',
-        phone:     m.phone || '',
-        branch:    m.branch || branch,
-        status:    m.dayStatus?.status ?? 'off',
-        bayNumber: m.dayStatus?.bayNumber ? String(m.dayStatus.bayNumber) : null,
-        clockInAt: m.dayStatus?.clockInAt ?? null,
-        workingHours: m.workingHours,
-        skills:    m.skills ?? undefined,
-        jobsToday: m.jobsToday ?? undefined,
-        revenueToday: m.revenueToday ?? undefined,
-        rating:    m.rating ?? undefined,
-        attendanceRate: m.attendanceRate ?? undefined,
-        overtimeHours: m.overtimeHours ?? undefined,
-        baseSalary: m.baseSalary ?? undefined,
-      }));
+      const [staffData, perfData] = await Promise.all([
+        apiFetch(`/api/staff?branch=${encodeURIComponent(branch)}&date=${today}`),
+        apiFetch(`/api/jobs?resource=staff-performance&branch=${encodeURIComponent(branch)}&date=${today}`)
+          .catch(() => []),
+      ]);
+
+      const perfMap: Record<string, any> = {};
+      (Array.isArray(perfData) ? perfData : []).forEach((p: any) => {
+        perfMap[String(p.staffId)] = p;
+      });
+
+      const mapped: StaffMember[] = (staffData as any[]).map((m: any) => {
+        const sid  = String(m._id || m.id);
+        const p    = perfMap[sid] || {};
+        const hasJobs = p.jobsCompleted != null || p.jobsInProgress != null;
+        const ratingFromEff = p.efficiencyPct != null
+          ? Math.max(1, Math.min(5, parseFloat((1 + (p.efficiencyPct / 100) * 4).toFixed(1))))
+          : undefined;
+        return {
+          id:            sid,
+          name:          m.name     || '',
+          role:          m.role     || 'Cashier',
+          jobTitle:      m.jobTitle || m.role || '',
+          username:      m.username || '',
+          phone:         m.phone    || '',
+          branch:        m.branch   || branch,
+          status:        m.dayStatus?.status   ?? 'off',
+          bayNumber:     p.activeBay ?? (m.dayStatus?.bayNumber ? String(m.dayStatus.bayNumber) : null),
+          activeBay:     p.activeBay ?? null,
+          clockInAt:     m.dayStatus?.clockInAt ?? null,
+          workingHours:  m.workingHours   ?? undefined,
+          skills:        Array.isArray(m.skills) && m.skills.length ? m.skills : undefined,
+          jobsToday:     p.jobsCompleted  ?? undefined,
+          jobsInProgress:p.jobsInProgress ?? undefined,
+          jobsOverdue:   p.jobsOverdue    ?? undefined,
+          revenueToday:  p.totalRevenue   ?? undefined,
+          overtimeHours: p.overtimeMins   != null ? p.overtimeMins / 60 : undefined,
+          efficiencyPct: p.efficiencyPct  ?? undefined,
+          onTimeRate:    p.onTimeRate     ?? undefined,
+          pauseCount:    p.pauseCount     ?? undefined,
+          currentJob:    p.currentJob     ?? null,
+          rating:        ratingFromEff,
+          attendanceRate:hasJobs ? 100 : undefined,
+          baseSalary:    m.baseSalary ?? undefined,
+          otRate:        m.otRate     ?? undefined,
+        };
+      });
       setStaff(mapped);
       setEnriched(enrichStaff(mapped));
     } catch (err: any) {
@@ -1091,8 +1607,26 @@ export function StaffPage() {
     }
   }, [branch]);
 
+  const fetchServicePrices = useCallback(async () => {
+    try {
+      const data = await apiFetch('/api/staff?resource=service-prices');
+      setServicePrices(Array.isArray(data) ? data : []);
+    } catch (e) { console.error('[servicePrices]', e); }
+  }, []);
+
+  const fetchPayrollStats = useCallback(async () => {
+    try {
+      const data = await apiFetch(
+        `/api/staff?resource=payroll-stats&branch=${encodeURIComponent(branch)}&month=${currentMonth}`
+      );
+      setPayrollStats(data);
+    } catch (e) { console.error('[payrollStats]', e); }
+  }, [branch, currentMonth]);
+
   useEffect(() => { fetchStaff(); }, [fetchStaff]);
-  useEffect(() => { if (activeTab === 'leaves') fetchLeaveRequests(); }, [activeTab, fetchLeaveRequests]);
+  useEffect(() => { if (activeTab === 'leaves')  fetchLeaveRequests();  }, [activeTab, fetchLeaveRequests]);
+  useEffect(() => { if (activeTab === 'payroll') fetchPayrollStats();   }, [activeTab, fetchPayrollStats]);
+  useEffect(() => { fetchServicePrices(); }, [fetchServicePrices]);
   useEffect(() => {
     if (activeTab === 'leaves') {
       const id = setInterval(fetchLeaveRequests, 15000);
@@ -1278,7 +1812,7 @@ export function StaffPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3.5">
-                        <div className="text-neutral-400 text-sm">{m.role || '—'}</div>
+                        <div className="text-neutral-400 text-sm">{m.jobTitle || m.role || '—'}</div>
                         {m.skills && m.skills.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1">
                             {m.skills.slice(0, 2).map(sk => (
@@ -1303,8 +1837,29 @@ export function StaffPage() {
                           : <span className="text-neutral-700 text-xs">—</span>}
                       </td>
                       <td className="px-4 py-3.5">
-                        <div className="text-white text-xs font-semibold">{m.jobsToday ?? 0} jobs</div>
-                        <div className="text-emerald-500 text-xs">Rs {((m.revenueToday ?? 0) / 1000).toFixed(1)}k</div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-white text-xs font-semibold">
+                            {m.jobsToday ?? 0} done
+                          </span>
+                          {(m.jobsInProgress ?? 0) > 0 && (
+                            <span className="text-[10px] text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded-full">
+                              {m.jobsInProgress} active
+                            </span>
+                          )}
+                          {(m.jobsOverdue ?? 0) > 0 && (
+                            <span className="flex items-center gap-0.5 text-[10px] text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded-full">
+                              <AlertTriangle className="w-2.5 h-2.5" />{m.jobsOverdue} OT
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-emerald-500 text-xs">Rs {((m.revenueToday ?? 0) / 1000).toFixed(1)}k</span>
+                          {m.efficiencyPct != null && (
+                            <span className={`text-[10px] font-medium ${m.efficiencyPct >= 90 ? 'text-emerald-400' : m.efficiencyPct >= 70 ? 'text-amber-400' : 'text-red-400'}`}>
+                              {m.efficiencyPct}% eff.
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
                         {m.phone
@@ -1390,10 +1945,10 @@ export function StaffPage() {
               <h3 className="text-white font-bold mb-4 text-sm">Branch Summary</h3>
               <div className="space-y-3">
                 {[
-                  { label: 'Total Jobs Today', value: enriched.reduce((a, s) => a + (s.jobsToday ?? 0), 0), color: 'text-[#FFD700]', icon: <Target className="w-4 h-4" /> },
-                  { label: 'Total Revenue', value: `Rs ${(enriched.reduce((a, s) => a + (s.revenueToday ?? 0), 0) / 1000).toFixed(1)}k`, color: 'text-emerald-400', icon: <DollarSign className="w-4 h-4" /> },
-                  { label: 'Avg. Rating', value: `${(enriched.reduce((a, s) => a + (s.rating ?? 0), 0) / Math.max(enriched.length, 1)).toFixed(1)} ★`, color: 'text-amber-400', icon: <Star className="w-4 h-4" /> },
-                  { label: 'Avg. Attendance', value: `${Math.round(enriched.reduce((a, s) => a + (s.attendanceRate ?? 0), 0) / Math.max(enriched.length, 1))}%`, color: 'text-blue-400', icon: <Activity className="w-4 h-4" /> },
+                  { label: 'Total Jobs Today',  value: enriched.reduce((a, s) => a + (s.jobsToday ?? 0), 0), color: 'text-[#FFD700]', icon: <Target className="w-4 h-4" /> },
+                  { label: 'In Progress',       value: enriched.reduce((a, s) => a + (s.jobsInProgress ?? 0), 0), color: 'text-blue-400', icon: <Activity className="w-4 h-4" /> },
+                  { label: 'Overdue Jobs',      value: enriched.reduce((a, s) => a + (s.jobsOverdue ?? 0), 0), color: 'text-red-400', icon: <AlertTriangle className="w-4 h-4" /> },
+                  { label: 'Total Revenue',     value: `Rs ${(enriched.reduce((a, s) => a + (s.revenueToday ?? 0), 0) / 1000).toFixed(1)}k`, color: 'text-emerald-400', icon: <DollarSign className="w-4 h-4" /> },
                 ].map(s => (
                   <div key={s.label} className="flex items-center gap-3 px-3 py-2.5 bg-neutral-800/50 rounded-xl">
                     <div className={`${s.color} opacity-70`}>{s.icon}</div>
@@ -1444,19 +1999,13 @@ export function StaffPage() {
       {/* ── Tab: Payroll ── */}
       {activeTab === 'payroll' && (
         <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6">
-          <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                <DollarSign className="w-4 h-4 text-emerald-400" />
-              </div>
-              <div>
-                <h3 className="text-white font-bold">Payroll Overview</h3>
-                <p className="text-neutral-500 text-xs">{branch} · {new Date().toLocaleString('en-GB', { month: 'long', year: 'numeric' })}</p>
-              </div>
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+              <DollarSign className="w-4 h-4 text-emerald-400" />
             </div>
-            <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg">
-              <AlertTriangle className="w-3.5 h-3.5" />
-              Estimates — verify with HR
+            <div>
+              <h3 className="text-white font-bold">Payroll Overview</h3>
+              <p className="text-neutral-500 text-xs">{branch} branch</p>
             </div>
           </div>
           {loading ? (
@@ -1467,7 +2016,15 @@ export function StaffPage() {
           ) : enriched.length === 0 ? (
             <div className="py-16 text-center text-neutral-500 text-sm">No staff data</div>
           ) : (
-            <PayrollPanel staff={enriched} />
+            <PayrollPanel
+              staff={enriched}
+              servicePrices={servicePrices}
+              payrollStats={payrollStats}
+              onEditSalary={m => setSalaryTarget(m)}
+              onManagePrices={() => setShowPricesModal(true)}
+              currentMonth={currentMonth}
+              onMonthChange={m => setCurrentMonth(m)}
+            />
           )}
         </div>
       )}
@@ -1564,6 +2121,22 @@ export function StaffPage() {
       {editMember   && <EditStaffModal member={editMember} onClose={() => setEditMember(null)} onSuccess={fetchStaff} />}
       {showLeave    && <LeaveModal     staff={enriched} onClose={() => setShowLeave(false)} onSubmit={addLeave} onRefresh={fetchLeaveRequests} />}
       {profileMember && <StaffProfileDrawer member={profileMember} onClose={() => setProfileMember(null)} />}
+      {showPricesModal && (
+        <ServicePricesModal
+          onClose={() => setShowPricesModal(false)}
+          onSaved={() => { fetchServicePrices(); fetchPayrollStats(); }}
+        />
+      )}
+      {salaryTarget && (
+        <SalaryModal
+          member={salaryTarget}
+          onClose={() => setSalaryTarget(null)}
+          onSaved={() => {
+            setSalaryTarget(null);
+            fetchStaff();
+          }}
+        />
+      )}
     </div>
   );
 }
