@@ -657,9 +657,9 @@ function NotificationSettings({ onToast }: { onToast: (m: string, t?: 'success'|
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════
 // 4. BUSINESS  (reads/writes Firestore at_business_config)
-// ═══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════
 const BIZ_DOC = 'at_business_config';
 
 function BusinessSettings({ onToast }: { onToast: (m: string, t?: 'success'|'error') => void }) {

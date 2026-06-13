@@ -3,14 +3,13 @@ import {
   Building2, Shield, FileText, Settings, Bell, Database,
   Wrench, Calendar, Plus, X, Edit2, Trash2, Check,
   Download, Upload, RefreshCw, Search, AlertTriangle,
-  Clock, User, ChevronDown, ChevronUp, Eye, EyeOff,
-  Copy, CheckCircle, MapPin, Phone, Globe, Hash,
-  DollarSign, ToggleLeft, ToggleRight, Package, Key,
-  Loader2, Save, RotateCcw, Filter,
+  Clock, User, CheckCircle, MapPin, Phone,
+  DollarSign, ToggleLeft, ToggleRight, Package,
+  Loader2, Save, RotateCcw,
 } from 'lucide-react';
 import {
   collection, getDocs, doc, setDoc, addDoc, deleteDoc,
-  updateDoc, query, orderBy, limit, where, Timestamp,
+  updateDoc, query, orderBy, limit,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase.ts';
 import { getSessionUser } from '../lib/auth';
@@ -55,7 +54,6 @@ interface Branch {
   closeTime:    string;
   workDays:     string[];
   manager:      string;
-  taxRate:      number;
   currency:     string;
   active:       boolean;
 }
@@ -111,10 +109,10 @@ const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
 // Default branches — seeded to Firestore on first load if collection is empty
 const DEFAULT_BRANCHES: Omit<Branch,'id'>[] = [
-  { name:'Pannipitiya', address:'278/2 High Level Rd, Pannipitiya', phone:'077 578 5785', email:'pannipitiya@anuratyres.lk', openTime:'08:30', closeTime:'19:00', workDays:['Mon','Tue','Wed','Thu','Fri','Sat'], manager:'', taxRate:0, currency:'LKR', active:true },
-  { name:'Ratnapura',   address:'Ratnapura, Sri Lanka',            phone:'076 688 5885',  email:'ratnapura@anuratyres.lk',   openTime:'08:30', closeTime:'19:00', workDays:['Mon','Tue','Wed','Thu','Fri','Sat'], manager:'', taxRate:0, currency:'LKR', active:true },
-  { name:'Kalawana',    address:'Kalawana, Sri Lanka',             phone:'0777 32 95 32', email:'kalawana@anuratyres.lk',    openTime:'08:30', closeTime:'19:00', workDays:['Mon','Tue','Wed','Thu','Fri','Sat'], manager:'', taxRate:0, currency:'LKR', active:true },
-  { name:'Nivithigala', address:'Nivithigala, Sri Lanka',          phone:'045 227 9396',  email:'nivithigala@anuratyres.lk', openTime:'08:30', closeTime:'19:00', workDays:['Mon','Tue','Wed','Thu','Fri','Sat'], manager:'', taxRate:0, currency:'LKR', active:true },
+  { name:'Pannipitiya', address:'278/2 High Level Rd, Pannipitiya', phone:'077 578 5785', email:'pannipitiya@anuratyres.lk', openTime:'08:30', closeTime:'19:00', workDays:['Mon','Tue','Wed','Thu','Fri','Sat'], manager:'', currency:'LKR', active:true },
+  { name:'Ratnapura',   address:'Ratnapura, Sri Lanka',            phone:'076 688 5885',  email:'ratnapura@anuratyres.lk',   openTime:'08:30', closeTime:'19:00', workDays:['Mon','Tue','Wed','Thu','Fri','Sat'], manager:'', currency:'LKR', active:true },
+  { name:'Kalawana',    address:'Kalawana, Sri Lanka',             phone:'0777 32 95 32', email:'kalawana@anuratyres.lk',    openTime:'08:30', closeTime:'19:00', workDays:['Mon','Tue','Wed','Thu','Fri','Sat'], manager:'', currency:'LKR', active:true },
+  { name:'Nivithigala', address:'Nivithigala, Sri Lanka',          phone:'045 227 9396',  email:'nivithigala@anuratyres.lk', openTime:'08:30', closeTime:'19:00', workDays:['Mon','Tue','Wed','Thu','Fri','Sat'], manager:'', currency:'LKR', active:true },
 ];
 const ROLES = ['Super Admin','Admin','Manager','Cashier'] as const;
 const MODULES = ['Dashboard','Bookings','Staff','Inventory','Customers','Jobs','Quotations','Invoices','Reports','Admin'] as const;
@@ -198,10 +196,14 @@ function Toast({ message, type, onClose }: { message: string; type: 'success'|'e
 // ═══════════════════════════════════════════════════════════════════════════════
 // 1. BRANCH SETTINGS
 // ═══════════════════════════════════════════════════════════════════════════════
-function BranchSettings({ audit }: { audit: (a: string, d: string) => void }) {
+function BranchSettings({ audit, onToast }: {
+  audit:   (a: string, d: string) => void;
+  onToast: (msg: string, type?: 'success'|'error'|'info') => void;
+}) {
   const [branches,  setBranches]  = useState<Branch[]>([]);
   const [loading,   setLoading]   = useState(true);
   const [editItem,  setEditItem]  = useState<Branch | null>(null);
+  const [saveError, setSaveError] = useState('');
   const [delId,     setDelId]     = useState<string | null>(null);
   const [saving,    setSaving]    = useState(false);
 
@@ -229,33 +231,61 @@ function BranchSettings({ audit }: { audit: (a: string, d: string) => void }) {
 
   const blank = (): Branch => ({
     name:'', address:'', phone:'', email:'', openTime:'08:30', closeTime:'19:00',
-    workDays: DAYS.filter(d=>d!=='Sun'), manager:'', taxRate: 0, currency:'LKR', active: true,
+    workDays: DAYS.filter(d=>d!=='Sun'), manager:'', currency:'LKR', active: true,
   });
 
   const save = async () => {
     if (!editItem) return;
-    if (!editItem.name.trim()) return;
-    setSaving(true);
+    if (!editItem.name.trim()) { setSaveError('Branch name is required'); return; }
+    setSaving(true); setSaveError('');
     try {
-      if (editItem.id) {
+      if (editItem.id && !editItem.id.startsWith('default-')) {
+        // Edit existing Firestore document
         await updateDoc(doc(db, COL.branches, editItem.id), { ...editItem });
         setBranches(p => p.map(b => b.id === editItem.id ? editItem : b));
         audit('UPDATE', `Updated branch "${editItem.name}"`);
+        onToast(`Branch "${editItem.name}" updated ✓`);
       } else {
-        const ref = await addDoc(collection(db, COL.branches), { ...editItem });
-        setBranches(p => [...p, { ...editItem, id: ref.id }]);
+        // New branch (or a seeded default that only exists locally)
+        const { id: _id, ...branchData } = editItem as Branch & { id?: string };
+        const ref = await addDoc(collection(db, COL.branches), branchData);
+        setBranches(p => {
+          // Remove the local default-X placeholder if it exists
+          const without = editItem.id?.startsWith('default-')
+            ? p.filter(b => b.id !== editItem.id)
+            : p;
+          return [...without, { ...branchData, id: ref.id }];
+        });
         audit('CREATE', `Created branch "${editItem.name}"`);
+        onToast(`Branch "${editItem.name}" created ✓`);
       }
       setEditItem(null);
-    } finally { setSaving(false); }
+    } catch (err: any) {
+      console.error('[BranchSettings save]', err);
+      const msg = err?.code === 'permission-denied'
+        ? 'Firestore permission denied — check security rules'
+        : err?.message || 'Failed to save branch';
+      setSaveError(msg);
+      onToast(msg, 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const del = async (id: string) => {
     const b = branches.find(x => x.id === id);
-    await deleteDoc(doc(db, COL.branches, id));
-    setBranches(p => p.filter(x => x.id !== id));
     setDelId(null);
-    audit('DELETE', `Deleted branch "${b?.name}"`);
+    try {
+      if (!id.startsWith('default-')) {
+        await deleteDoc(doc(db, COL.branches, id));
+      }
+      setBranches(p => p.filter(x => x.id !== id));
+      audit('DELETE', `Deleted branch "${b?.name}"`);
+      onToast(`Branch "${b?.name}" deleted`);
+    } catch (err: any) {
+      console.error('[BranchSettings del]', err);
+      onToast(err?.message || 'Failed to delete branch', 'error');
+    }
   };
 
   return (
@@ -292,7 +322,7 @@ function BranchSettings({ audit }: { audit: (a: string, d: string) => void }) {
                   {b.address && <div className="flex items-center gap-1"><MapPin className="w-3 h-3" />{b.address}</div>}
                   {b.phone   && <div className="flex items-center gap-1"><Phone className="w-3 h-3" />{b.phone}</div>}
                   <div className="flex items-center gap-1"><Clock className="w-3 h-3" />{b.openTime}–{b.closeTime}</div>
-                  <div className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{b.taxRate}% tax · {b.currency}</div>
+                  <div className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{b.currency}</div>
                 </div>
                 <div className="flex gap-1 flex-wrap">
                   {DAYS.map(d => (
@@ -310,20 +340,25 @@ function BranchSettings({ audit }: { audit: (a: string, d: string) => void }) {
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-neutral-900 rounded-2xl border border-neutral-700 w-full max-w-lg shadow-2xl max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800 flex-shrink-0">
-              <h2 className="text-base font-bold text-white">{editItem.id ? 'Edit Branch' : 'Add Branch'}</h2>
-              <button onClick={() => setEditItem(null)} className="p-1.5 rounded-lg text-neutral-500 hover:text-white hover:bg-neutral-800"><X className="w-4 h-4" /></button>
+              <h2 className="text-base font-bold text-white">{editItem.id && !editItem.id.startsWith('default-') ? 'Edit Branch' : 'Add Branch'}</h2>
+              <button onClick={() => { setEditItem(null); setSaveError(''); }} className="p-1.5 rounded-lg text-neutral-500 hover:text-white hover:bg-neutral-800"><X className="w-4 h-4" /></button>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {saveError && (
+                <div className="flex items-start gap-2 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  {saveError}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2"><FL>Branch Name *</FL><FI value={editItem.name} onChange={e => setEditItem({...editItem,name:e.target.value})} placeholder="e.g. Pannipitiya" /></div>
-                <div className="col-span-2"><FL>Address</FL><FI value={editItem.address} onChange={e => setEditItem({...editItem,address:e.target.value})} placeholder="Full address" /></div>
-                <div><FL>Phone</FL><FI value={editItem.phone} onChange={e => setEditItem({...editItem,phone:e.target.value})} placeholder="077 XXX XXXX" /></div>
+                <div className="col-span-2"><FL>Branch Name *</FL><FI value={editItem.name} onChange={e => { setEditItem({...editItem,name:e.target.value.toUpperCase()}); setSaveError(''); }} placeholder="e.g. COLOMBO SOUTH" /></div>
+                <div className="col-span-2"><FL>Address</FL><FI value={editItem.address} onChange={e => setEditItem({...editItem,address:e.target.value.toUpperCase()})} placeholder="FULL ADDRESS" /></div>
+                <div><FL>Phone</FL><FI value={editItem.phone} onChange={e => setEditItem({...editItem,phone:e.target.value.toUpperCase()})} placeholder="077 XXX XXXX" /></div>
                 <div><FL>Email</FL><FI type="email" value={editItem.email} onChange={e => setEditItem({...editItem,email:e.target.value})} placeholder="branch@tyres.lk" /></div>
                 <div><FL>Open Time</FL><FI type="time" value={editItem.openTime} onChange={e => setEditItem({...editItem,openTime:e.target.value})} /></div>
                 <div><FL>Close Time</FL><FI type="time" value={editItem.closeTime} onChange={e => setEditItem({...editItem,closeTime:e.target.value})} /></div>
-                <div><FL>Manager Name</FL><FI value={editItem.manager} onChange={e => setEditItem({...editItem,manager:e.target.value})} placeholder="Staff name" /></div>
+                <div><FL>Manager Name</FL><FI value={editItem.manager} onChange={e => setEditItem({...editItem,manager:e.target.value.toUpperCase()})} placeholder="STAFF NAME" /></div>
                 <div><FL>Currency</FL><FS value={editItem.currency} onChange={e => setEditItem({...editItem,currency:e.target.value})}><option>LKR</option><option>USD</option></FS></div>
-                <div><FL>Tax Rate (%)</FL><FI type="number" min={0} max={100} value={editItem.taxRate} onChange={e => setEditItem({...editItem,taxRate:Number(e.target.value)})} /></div>
                 <div className="flex items-end gap-2"><div className="flex-1"><FL>Status</FL><FS value={editItem.active?'active':'inactive'} onChange={e => setEditItem({...editItem,active:e.target.value==='active'})}><option value="active">Active</option><option value="inactive">Inactive</option></FS></div></div>
               </div>
               <div>
@@ -1200,7 +1235,7 @@ export function AdminPage() {
 
   const renderSection = () => {
     switch(active) {
-      case 'branches':    return <BranchSettings audit={log} />;
+      case 'branches':    return <BranchSettings audit={log} onToast={showToast} />;
       case 'permissions': return <RolePermissions audit={log} />;
       case 'audit':       return <AuditLog />;
       case 'system':      return <SystemSettings audit={log} />;

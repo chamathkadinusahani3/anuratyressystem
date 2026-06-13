@@ -16,8 +16,9 @@ import { CustomersPage } from './CustomersPage';
 import { JobManagementPage } from './JobManagementPage';
 import { QuotationPage }    from './QuotationPage';
 import { InvoicePage }      from './InvoicePage';
-import { ReportsPage }      from './ReportsPage';
-import { AdminPage }        from './AdminPage';
+import { ReportsPage }           from './ReportsPage';
+import { AdminPage }             from './AdminPage';
+import { DamageInspectionPage }  from './DamageInspectionPage';
 import { canAccessTab, getAllowedTabs, getSessionUser, roleBadgeClass, type UserRole } from '../lib/auth';
 
 // ─── API constant (single source of truth) ────────────────────────────────────
@@ -728,8 +729,9 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
       case 'user-management': return <UserManagement />;
       case 'corporate-data':  return <CorporateManagementPage />;
       case 'customers':       return <CustomersPage />;
-      case 'jobs':            return <JobManagementPage />;
-      case 'quotations':      return <QuotationPage />;
+      case 'jobs':               return <JobManagementPage />;
+      case 'damage-inspection':  return <DamageInspectionPage onBack={() => safeSetTab('jobs')} />;
+      case 'quotations':         return <QuotationPage />;
       case 'invoices':        return <InvoicePage />;
       case 'reports':         return <ReportsPage />;
       case 'admin':           return <AdminPage />;

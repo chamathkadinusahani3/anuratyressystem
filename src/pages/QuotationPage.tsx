@@ -462,12 +462,12 @@ function QuotationForm({ initial, onClose, onSaved }: {
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <FLabel>Full Name *</FLabel>
-                  <FInput value={data.customer.name} onChange={e => setCustomer('name', e.target.value)} placeholder="e.g. Kamal Perera" />
+                  <FInput value={data.customer.name} onChange={e => setCustomer('name', e.target.value.toUpperCase())} placeholder="E.G. KAMAL PERERA" />
                   {errors.custName && <p className="text-red-400 text-xs mt-1">{errors.custName}</p>}
                 </div>
                 <div>
                   <FLabel>Phone *</FLabel>
-                  <FInput value={data.customer.phone} onChange={e => setCustomer('phone', e.target.value)} placeholder="077 123 4567" />
+                  <FInput value={data.customer.phone} onChange={e => setCustomer('phone', e.target.value.toUpperCase())} placeholder="077 123 4567" />
                   {errors.custPhone && <p className="text-red-400 text-xs mt-1">{errors.custPhone}</p>}
                 </div>
                 <div>
@@ -476,7 +476,7 @@ function QuotationForm({ initial, onClose, onSaved }: {
                 </div>
                 <div className="col-span-2">
                   <FLabel>Address</FLabel>
-                  <FInput value={data.customer.address} onChange={e => setCustomer('address', e.target.value)} placeholder="No. 12, Main Street, Colombo" />
+                  <FInput value={data.customer.address} onChange={e => setCustomer('address', e.target.value.toUpperCase())} placeholder="NO. 12, MAIN STREET, COLOMBO" />
                 </div>
               </div>
 
@@ -489,15 +489,15 @@ function QuotationForm({ initial, onClose, onSaved }: {
                 </div>
                 <div>
                   <FLabel>Colour</FLabel>
-                  <FInput value={data.vehicle.color} onChange={e => setVehicle('color', e.target.value)} placeholder="Silver" />
+                  <FInput value={data.vehicle.color} onChange={e => setVehicle('color', e.target.value.toUpperCase())} placeholder="SILVER" />
                 </div>
                 <div>
                   <FLabel>Make</FLabel>
-                  <FInput value={data.vehicle.make} onChange={e => setVehicle('make', e.target.value)} placeholder="Toyota" />
+                  <FInput value={data.vehicle.make} onChange={e => setVehicle('make', e.target.value.toUpperCase())} placeholder="TOYOTA" />
                 </div>
                 <div>
                   <FLabel>Model</FLabel>
-                  <FInput value={data.vehicle.model} onChange={e => setVehicle('model', e.target.value)} placeholder="Corolla" />
+                  <FInput value={data.vehicle.model} onChange={e => setVehicle('model', e.target.value.toUpperCase())} placeholder="COROLLA" />
                 </div>
                 <div>
                   <FLabel>Year</FLabel>
@@ -509,7 +509,7 @@ function QuotationForm({ initial, onClose, onSaved }: {
                 </div>
                 <div className="col-span-2">
                   <FLabel>VIN / Chassis No.</FLabel>
-                  <FInput value={data.vehicle.vin} onChange={e => setVehicle('vin', e.target.value)} placeholder="Optional" />
+                  <FInput value={data.vehicle.vin} onChange={e => setVehicle('vin', e.target.value.toUpperCase())} placeholder="OPTIONAL" />
                 </div>
               </div>
 
@@ -548,23 +548,23 @@ function QuotationForm({ initial, onClose, onSaved }: {
                 <div className="grid grid-cols-2 gap-4 animate-in fade-in">
                   <div className="col-span-2">
                     <FLabel>Insurance Company *</FLabel>
-                    <FInput value={data.insurance.company} onChange={e => setInsurance('company', e.target.value)} placeholder="e.g. Ceylinco General Insurance" />
+                    <FInput value={data.insurance.company} onChange={e => setInsurance('company', e.target.value.toUpperCase())} placeholder="E.G. CEYLINCO GENERAL INSURANCE" />
                   </div>
                   <div>
                     <FLabel>Policy Number</FLabel>
-                    <FInput value={data.insurance.policyNumber} onChange={e => setInsurance('policyNumber', e.target.value)} placeholder="POL-XXXXXXXX" />
+                    <FInput value={data.insurance.policyNumber} onChange={e => setInsurance('policyNumber', e.target.value.toUpperCase())} placeholder="POL-XXXXXXXX" />
                   </div>
                   <div>
                     <FLabel>Claim Number</FLabel>
-                    <FInput value={data.insurance.claimNumber} onChange={e => setInsurance('claimNumber', e.target.value)} placeholder="CLM-XXXXXXXX" />
+                    <FInput value={data.insurance.claimNumber} onChange={e => setInsurance('claimNumber', e.target.value.toUpperCase())} placeholder="CLM-XXXXXXXX" />
                   </div>
                   <div>
                     <FLabel>Assessor Name</FLabel>
-                    <FInput value={data.insurance.assessorName} onChange={e => setInsurance('assessorName', e.target.value)} placeholder="Assessor's full name" />
+                    <FInput value={data.insurance.assessorName} onChange={e => setInsurance('assessorName', e.target.value.toUpperCase())} placeholder="ASSESSOR'S FULL NAME" />
                   </div>
                   <div>
                     <FLabel>Assessor Phone</FLabel>
-                    <FInput value={data.insurance.assessorPhone} onChange={e => setInsurance('assessorPhone', e.target.value)} placeholder="077 XXX XXXX" />
+                    <FInput value={data.insurance.assessorPhone} onChange={e => setInsurance('assessorPhone', e.target.value.toUpperCase())} placeholder="077 XXX XXXX" />
                   </div>
                 </div>
               )}
@@ -645,7 +645,7 @@ function QuotationForm({ initial, onClose, onSaved }: {
                       </FSelect>
                     </div>
                     <div className="col-span-4">
-                      <FInput value={item.description} onChange={e => setItem(idx, { description: e.target.value })} placeholder="e.g. Front brake pads" />
+                      <FInput value={item.description} onChange={e => setItem(idx, { description: e.target.value.toUpperCase() })} placeholder="E.G. FRONT BRAKE PADS" />
                     </div>
                     <div className="col-span-2">
                       <FInput type="number" min={1} value={item.quantity} onChange={e => setItem(idx, { quantity: Number(e.target.value) })} />

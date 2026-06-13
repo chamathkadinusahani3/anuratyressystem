@@ -664,12 +664,12 @@ function InvoiceForm({ initial, onClose, onSaved }: {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="col-span-2">
                     <FL>Full Name *</FL>
-                    <FI value={data.customer.name} onChange={e=>setCustomer('name',e.target.value)} placeholder="Customer name" />
+                    <FI value={data.customer.name} onChange={e=>setCustomer('name',e.target.value.toUpperCase())} placeholder="CUSTOMER NAME" />
                     {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
                   </div>
                   <div>
                     <FL>Phone *</FL>
-                    <FI value={data.customer.phone} onChange={e=>setCustomer('phone',e.target.value)} placeholder="077 123 4567" />
+                    <FI value={data.customer.phone} onChange={e=>setCustomer('phone',e.target.value.toUpperCase())} placeholder="077 123 4567" />
                     {errors.phone && <p className="text-red-400 text-xs mt-1">{errors.phone}</p>}
                   </div>
                   <div>
@@ -678,7 +678,7 @@ function InvoiceForm({ initial, onClose, onSaved }: {
                   </div>
                   <div className="col-span-2">
                     <FL>Address</FL>
-                    <FI value={data.customer.address} onChange={e=>setCustomer('address',e.target.value)} placeholder="Customer address" />
+                    <FI value={data.customer.address} onChange={e=>setCustomer('address',e.target.value.toUpperCase())} placeholder="CUSTOMER ADDRESS" />
                   </div>
                 </div>
               </div>
@@ -695,11 +695,11 @@ function InvoiceForm({ initial, onClose, onSaved }: {
                   </div>
                   <div>
                     <FL>Make</FL>
-                    <FI value={data.customer.vehicleMake} onChange={e=>setCustomer('vehicleMake',e.target.value)} placeholder="Toyota" />
+                    <FI value={data.customer.vehicleMake} onChange={e=>setCustomer('vehicleMake',e.target.value.toUpperCase())} placeholder="TOYOTA" />
                   </div>
                   <div>
                     <FL>Model</FL>
-                    <FI value={data.customer.vehicleModel} onChange={e=>setCustomer('vehicleModel',e.target.value)} placeholder="Corolla" />
+                    <FI value={data.customer.vehicleModel} onChange={e=>setCustomer('vehicleModel',e.target.value.toUpperCase())} placeholder="COROLLA" />
                   </div>
                 </div>
               </div>
@@ -725,7 +725,7 @@ function InvoiceForm({ initial, onClose, onSaved }: {
                   </div>
                   {data.lines.map((line,idx)=>(
                     <div key={line.id} className="grid grid-cols-12 gap-2 items-center">
-                      <div className="col-span-5"><FI value={line.description} onChange={e=>setLine(idx,{description:e.target.value})} placeholder="e.g. Brake pads front" /></div>
+                      <div className="col-span-5"><FI value={line.description} onChange={e=>setLine(idx,{description:e.target.value.toUpperCase()})} placeholder="E.G. BRAKE PADS FRONT" /></div>
                       <div className="col-span-2"><FI type="number" min={1} value={line.quantity} onChange={e=>setLine(idx,{quantity:Number(e.target.value)})} /></div>
                       <div className="col-span-2"><FI type="number" min={0} value={line.unitPrice} onChange={e=>setLine(idx,{unitPrice:Number(e.target.value)})} /></div>
                       <div className="col-span-2 text-white text-xs font-medium text-right">{line.total.toLocaleString()}</div>
@@ -816,7 +816,7 @@ function InvoiceForm({ initial, onClose, onSaved }: {
                   </div>
                   <div>
                     <FL>Payment Notes</FL>
-                    <FI value={data.paymentNotes} onChange={e=>set('paymentNotes',e.target.value)} placeholder="Receipt #, etc." />
+                    <FI value={data.paymentNotes} onChange={e=>set('paymentNotes',e.target.value.toUpperCase())} placeholder="RECEIPT #, ETC." />
                   </div>
                 </div>
                 {data.paidAmount > 0 && (

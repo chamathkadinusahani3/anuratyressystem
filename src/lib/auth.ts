@@ -20,10 +20,10 @@ const ALL_BRANCH_ROLES: UserRole[] = ['Super Admin', 'Admin'];
 // ── Which nav tabs each role can access ─────────────────────────────────────
 //    'dashboard' is always visible to everyone.
 const ROLE_ALLOWED_TABS: Record<UserRole, string[]> = {
-  'Super Admin': ['dashboard', 'bookings', 'staff', 'inventory', 'customers', 'jobs', 'quotations', 'invoices', 'reports', 'admin', 'corporate-data', 'user-management', 'settings'],
-  'Admin':       ['dashboard', 'bookings', 'staff', 'inventory', 'customers', 'jobs', 'quotations', 'invoices', 'reports', 'admin', 'corporate-data', 'settings'],
-  'Manager':     ['dashboard', 'bookings', 'staff', 'inventory', 'customers', 'jobs', 'quotations', 'invoices', 'reports', 'settings'],
-  'Cashier':     ['dashboard', 'bookings', 'inventory', 'quotations', 'invoices', 'settings'],
+  'Super Admin': ['dashboard', 'bookings', 'staff', 'inventory', 'customers', 'jobs', 'damage-inspection', 'quotations', 'invoices', 'reports', 'admin', 'corporate-data', 'user-management', 'settings'],
+  'Admin':       ['dashboard', 'bookings', 'staff', 'inventory', 'customers', 'jobs', 'damage-inspection', 'quotations', 'invoices', 'reports', 'admin', 'corporate-data', 'settings'],
+  'Manager':     ['dashboard', 'bookings', 'staff', 'inventory', 'customers', 'jobs', 'damage-inspection', 'quotations', 'invoices', 'reports', 'settings'],
+  'Cashier':     ['dashboard', 'bookings', 'inventory', 'damage-inspection', 'quotations', 'invoices', 'settings'],
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

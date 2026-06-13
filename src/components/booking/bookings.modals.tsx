@@ -1,6 +1,6 @@
 // bookings.modals.tsx — ManualBookingModal, BookingDetailModal, BookingNotesModal, CalendarModal, PrintView
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X, RefreshCw, User, Car, MapPin, Calendar, Clock, Shield,
   CheckCircle, AlertTriangle, PlayCircle, XCircle, List,
@@ -33,9 +33,11 @@ export function ManualBookingModal({
   defaultBranch?:   string;
   reBookFrom?:      Booking;
 }) {
-  const [loading,   setLoading]   = useState(false);
-  const [error,     setError]     = useState<string | null>(null);
+  const [loading,    setLoading]    = useState(false);
+  const [error,      setError]      = useState<string | null>(null);
   const [autofilled, setAutofilled] = useState(false);
+  const [lookingUp,  setLookingUp]  = useState(false);
+  const lookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sessionUser  = getSessionUser();
   const lockedBranch = defaultBranch
@@ -80,19 +82,47 @@ export function ManualBookingModal({
   };
 
   const lookupCustomer = (phone: string, vehicleNo: string) => {
+    if (lookupTimer.current) clearTimeout(lookupTimer.current);
     const pc = phone.replace(/\s/g, '');
     const vc = vehicleNo.replace(/\s/g, '').toUpperCase();
-    const match = existingBookings.find(b => {
-      if (pc.length >= 7 && b.phone && b.phone.replace(/\s/g, '').includes(pc)) return true;
-      if (vc.length >= 4 && b.vehicle && b.vehicle !== 'N/A' &&
-          b.vehicle.replace(/\s/g, '').toUpperCase() === vc) return true;
-      return false;
-    });
-    if (match) {
-      setForm(f => ({ ...f, name: match.customer || f.name, email: match.email || f.email,
-        phone: phone || match.phone || f.phone, vehicleNo: vehicleNo || match.vehicle || f.vehicleNo }));
-      setAutofilled(true);
-    } else { setAutofilled(false); }
+    if (pc.length < 7 && vc.length < 4) { setAutofilled(false); return; }
+
+    lookupTimer.current = setTimeout(async () => {
+      setLookingUp(true);
+      try {
+        const params = new URLSearchParams();
+        if (pc.length >= 7) params.set('phone',   pc);
+        if (vc.length >= 4) params.set('vehicle', vc);
+        const res  = await fetch(`${API_URL}/customers?${params}`);
+        const data = await res.json();
+        if (data.success && data.customer) {
+          setForm(f => ({
+            ...f,
+            name:      data.customer.name      || f.name,
+            email:     data.customer.email     || f.email,
+            phone:     phone || data.customer.phone     || f.phone,
+            vehicleNo: vehicleNo || data.customer.vehicleNo || f.vehicleNo,
+          }));
+          setAutofilled(true);
+          setLookingUp(false);
+          return;
+        }
+      } catch { /* fall through to in-memory */ }
+
+      // In-memory fallback (already-loaded bookings on this page)
+      const match = existingBookings.find(b => {
+        if (pc.length >= 7 && b.phone && b.phone.replace(/\s/g, '').includes(pc)) return true;
+        if (vc.length >= 4 && b.vehicle && b.vehicle !== 'N/A' &&
+            b.vehicle.replace(/\s/g, '').toUpperCase() === vc) return true;
+        return false;
+      });
+      if (match) {
+        setForm(f => ({ ...f, name: match.customer || f.name, email: match.email || f.email,
+          phone: phone || match.phone || f.phone, vehicleNo: vehicleNo || match.vehicle || f.vehicleNo }));
+        setAutofilled(true);
+      } else { setAutofilled(false); }
+      setLookingUp(false);
+    }, 400);
   };
 
   const toggle = (id: string) => setForm(f => ({
@@ -228,7 +258,12 @@ export function ManualBookingModal({
               </div>
             </div>
 
-            {autofilled && (
+            {lookingUp ? (
+              <div className="flex items-center gap-2 px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg">
+                <RefreshCw className="w-4 h-4 text-neutral-500 animate-spin flex-shrink-0" />
+                <span className="text-xs text-neutral-500">Looking up customer…</span>
+              </div>
+            ) : autofilled && (
               <div className="flex items-center gap-2 px-3 py-2 bg-green-500/10 border border-green-500/30 rounded-lg">
                 <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0" />
                 <span className="text-xs text-green-400">Returning customer — details auto-filled.</span>
