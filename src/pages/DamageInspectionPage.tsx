@@ -9,6 +9,7 @@ import {
   ChevronDown, ChevronUp, Printer, Activity, Search, Loader2,
 } from 'lucide-react';
 import { getSessionUser } from '../lib/auth';
+import { jsPDF } from 'jspdf';
 
 const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
 
@@ -129,6 +130,72 @@ async function compressImage(file: File): Promise<string> {
     };
     img.onerror = () => { URL.revokeObjectURL(blobUrl); resolve(''); };
     img.src = blobUrl;
+  });
+}
+
+// Compress a video using canvas + MediaRecorder → 640px max, 400 kbps → base64 data URL
+async function compressVideo(
+  file: File,
+  onProgress: (pct: number) => void,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const blobUrl = URL.createObjectURL(file);
+    const video   = document.createElement('video');
+    video.src        = blobUrl;
+    video.muted      = true;   // required for autoplay; audio re-attached from captureStream
+    video.playsInline = true;
+    video.preload    = 'metadata';
+
+    video.onloadedmetadata = () => {
+      const MAX   = 640;
+      const scale = Math.min(MAX / video.videoWidth, MAX / video.videoHeight, 1);
+      const w     = Math.round(video.videoWidth  * scale);
+      const h     = Math.round(video.videoHeight * scale);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d')!;
+
+      const stream = canvas.captureStream(15);
+
+      // Attach audio tracks when supported (Chrome / Edge)
+      if (typeof (video as any).captureStream === 'function') {
+        const vs = (video as any).captureStream() as MediaStream;
+        vs.getAudioTracks().forEach((t: MediaStreamTrack) => stream.addTrack(t));
+      }
+
+      const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+        .find(m => MediaRecorder.isTypeSupported(m)) ?? 'video/webm';
+      const rec  = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 400_000 });
+      const chunks: Blob[] = [];
+
+      rec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+      rec.onstop = () => {
+        URL.revokeObjectURL(blobUrl);
+        const blob   = new Blob(chunks, { type: mime.split(';')[0] });
+        const reader = new FileReader();
+        reader.onload  = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Read failed'));
+        reader.readAsDataURL(blob);
+      };
+
+      let rafId: number;
+      const draw = () => {
+        ctx.drawImage(video, 0, 0, w, h);
+        if (video.duration > 0)
+          onProgress(Math.min((video.currentTime / video.duration) * 100, 99));
+        rafId = requestAnimationFrame(draw);
+      };
+
+      video.onended = () => { cancelAnimationFrame(rafId); rec.stop(); };
+      video.onerror = e => { cancelAnimationFrame(rafId); URL.revokeObjectURL(blobUrl); reject(e); };
+
+      rec.start(100);
+      draw();
+      video.play().catch(err => { URL.revokeObjectURL(blobUrl); reject(err); });
+    };
+
+    video.onerror = e => { URL.revokeObjectURL(blobUrl); reject(e); };
   });
 }
 
@@ -331,6 +398,33 @@ function CustomerPreviewModal({
             </div>
           )}
 
+          {mediaFiles.filter(f => f.type === 'video' && f.url).length > 0 && (
+            <div className="border border-gray-200 rounded-xl p-4">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                Evidence Videos ({mediaFiles.filter(f => f.type === 'video' && f.url).length})
+              </p>
+              <div className="space-y-3">
+                {mediaFiles.filter(f => f.type === 'video' && f.url).map(f => (
+                  <div key={f.id} className="bg-gray-100 rounded-lg overflow-hidden">
+                    <video
+                      src={f.url}
+                      controls
+                      preload="metadata"
+                      className="w-full max-h-64 object-contain bg-black rounded-t-lg"
+                    />
+                    <div className="px-3 py-2 flex items-center gap-2">
+                      <Play className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                      <p className="text-xs text-gray-600 truncate">{f.name}</p>
+                      {f.duration !== undefined && (
+                        <span className="text-xs text-gray-400 ml-auto flex-shrink-0">{fmtDuration(f.duration)}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {techNotes && (
             <div className="border border-gray-200 rounded-xl p-4">
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Technician Notes</p>
@@ -414,6 +508,7 @@ export function DamageInspectionPage({ onBack, jobId: initJobId }: { onBack?: ()
   const [showPreview,    setShowPreview]     = useState(false);
   const [dragging,       setDragging]       = useState(false);
   const [lightboxMedia,  setLightbox]       = useState<MediaFile | null>(null);
+  const [compressing,    setCompressing]    = useState<{ name: string; pct: number } | null>(null);
   const [copiedLink,     setCopied]         = useState(false);
   const [sendingApproval, setSending]       = useState(false);
   const [auditOpen,      setAuditOpen]      = useState(false);
@@ -591,20 +686,40 @@ export function DamageInspectionPage({ onBack, jobId: initJobId }: { onBack?: ()
         };
         setMedia(m => [...m, mf]);
       } else {
-        // Video: store blob URL locally; metadata saved to DB (video binary not stored)
-        const blobUrl = URL.createObjectURL(file);
-        const mf: MediaFile = {
-          id: uid(), type: 'video', url: blobUrl,
-          name: file.name, size: file.size,
-          uploadedAt: new Date().toISOString(), uploadedBy: currentUser,
-        };
-        const vid = document.createElement('video');
-        vid.preload = 'metadata';
-        vid.src = blobUrl;
-        vid.onloadedmetadata = () => {
-          setMedia(m => m.map(x => x.id === mf.id ? { ...x, duration: Math.round(vid.duration) } : x));
-        };
-        setMedia(m => [...m, mf]);
+        // Video: compress to 640px/400kbps via canvas+MediaRecorder, then store as base64
+        const id = uid();
+        const needsCompress = file.size > 3 * 1024 * 1024; // compress anything > 3 MB
+        try {
+          let dataUrl: string;
+          if (needsCompress) {
+            setCompressing({ name: file.name, pct: 0 });
+            dataUrl = await compressVideo(file, pct =>
+              setCompressing({ name: file.name, pct: Math.round(pct) })
+            );
+            setCompressing(null);
+          } else {
+            dataUrl = await new Promise<string>((res, rej) => {
+              const reader = new FileReader();
+              reader.onload  = () => res(reader.result as string);
+              reader.onerror = rej;
+              reader.readAsDataURL(file);
+            });
+          }
+          const mf: MediaFile = {
+            id, type: 'video', url: dataUrl,
+            name: file.name, size: file.size,
+            uploadedAt: new Date().toISOString(), uploadedBy: currentUser,
+          };
+          const vid = document.createElement('video');
+          vid.preload = 'metadata';
+          vid.src = dataUrl;
+          vid.onloadedmetadata = () => {
+            setMedia(m => m.map(x => x.id === id ? { ...x, duration: Math.round(vid.duration) } : x));
+          };
+          setMedia(m => [...m, mf]);
+        } catch {
+          setCompressing(null);
+        }
       }
     }
   };
@@ -657,9 +772,254 @@ export function DamageInspectionPage({ onBack, jobId: initJobId }: { onBack?: ()
     setTs(t => ({ ...t, [decision]: ts }));
     setShowPreview(false);
     advanceTimeline(`Customer ${decision.charAt(0).toUpperCase() + decision.slice(1)}`);
-    if (decision === 'approved') advanceTimeline('Repair Continued');
+    if (decision === 'approved') {
+      advanceTimeline('Repair Continued');
+      // Auto-update job status to in_progress
+      if (selectedJobId) {
+        fetch(`${API_URL}/jobs?id=${selectedJobId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_status', status: 'in_progress' }),
+        }).catch(err => console.error('[job status auto-update]', err));
+      }
+    }
     logAudit(`Customer ${decision} the additional repairs`);
   };
+
+  // ── PDF Report Generator ─────────────────────────────────────────────────────
+  const generatePDF = useCallback(() => {
+    // Compute safeJob locally so this callback doesn't depend on the render-time const
+    const safeJob: JobSummary = job || {
+      jobNumber: '—', customerName: '—', vehicleReg: '—', vehicleMake: '', vehicleModel: '',
+      currentService: '—', originalCost: 0, status: 'Pending' as JobStatus, technician: '—',
+      branch: '—', createdAt: new Date().toISOString(),
+    };
+    const additionalFromReports = damageReports.reduce((s, r) => s + r.additionalCost, 0);
+    const quoteAdditional = quotationItems.reduce((s, i) => s + i.qty * i.unitPrice + i.labourCost, 0);
+    const grandTotal = (safeJob.originalCost || 0) + (quoteAdditional || additionalFromReports);
+
+    const doc  = new jsPDF('p', 'mm', 'a4');
+    const PW   = doc.internal.pageSize.getWidth();   // 210
+    const PH   = doc.internal.pageSize.getHeight();  // 297
+    const ML   = 15;
+    const CW   = PW - ML * 2; // 180
+    let y      = 0;
+
+    const newPage = () => { doc.addPage(); y = 20; };
+    const check  = (need: number) => { if (y + need > PH - 18) newPage(); };
+
+    const setFont = (size: number, style: 'normal' | 'bold' = 'normal', color: [number,number,number] = [30,30,30]) => {
+      doc.setFontSize(size); doc.setFont('helvetica', style); doc.setTextColor(...color);
+    };
+
+    // ── Header bar ──────────────────────────────────────────────────────────────
+    doc.setFillColor(10, 10, 10);
+    doc.rect(0, 0, PW, 20, 'F');
+    setFont(14, 'bold', [255, 215, 0]);
+    doc.text('ANURA TYRES PVT LTD', ML, 11);
+    setFont(7, 'normal', [160, 160, 160]);
+    doc.text('Damage Inspection Report  ·  Confidential', ML, 16.5);
+    setFont(7, 'normal', [160, 160, 160]);
+    doc.text(fmtTime(new Date().toISOString()), PW - ML, 13, { align: 'right' });
+    y = 30;
+
+    // ── Report title ────────────────────────────────────────────────────────────
+    setFont(15, 'bold', [15, 15, 15]);
+    doc.text('DAMAGE INSPECTION REPORT', ML, y); y += 6;
+    setFont(8, 'normal', [100, 100, 100]);
+    doc.text(`Job ${safeJob.jobNumber}  ·  ${safeJob.branch}  ·  ${fmtDate(safeJob.createdAt)}`, ML, y); y += 5;
+    doc.setDrawColor(220, 220, 220); doc.line(ML, y, PW - ML, y); y += 8;
+
+    // ── Job info grid ───────────────────────────────────────────────────────────
+    setFont(7, 'bold', [80, 80, 80]);
+    doc.text('VEHICLE & JOB INFORMATION', ML, y); y += 5;
+    const jobFields: [string, string][] = [
+      ['Customer',    safeJob.customerName],
+      ['Vehicle Reg', safeJob.vehicleReg],
+      ['Branch',      safeJob.branch],
+      ['Service',     safeJob.currentService],
+      ['Technician',  safeJob.technician || '—'],
+      ['Original Est',fmtCurrency(safeJob.originalCost)],
+    ];
+    const colW = CW / 3;
+    jobFields.forEach(([label, value], i) => {
+      const cx = ML + (i % 3) * colW;
+      const cy = y + Math.floor(i / 3) * 12;
+      setFont(7, 'normal', [120, 120, 120]); doc.text(label.toUpperCase(), cx, cy);
+      setFont(8.5, 'bold', [20, 20, 20]);    doc.text(value || '—', cx, cy + 5);
+    });
+    y += (Math.ceil(jobFields.length / 3)) * 12 + 5;
+    doc.setDrawColor(220, 220, 220); doc.line(ML, y, PW - ML, y); y += 8;
+
+    // ── Damage reports ──────────────────────────────────────────────────────────
+    if (damageReports.length > 0) {
+      check(14);
+      setFont(7, 'bold', [80, 80, 80]);
+      doc.text(`DAMAGE REPORTS (${damageReports.length})`, ML, y); y += 5;
+
+      const sevColor: Record<Severity, [number,number,number]> = {
+        Low:      [74, 222, 128],
+        Medium:   [250, 204, 21],
+        High:     [251, 146, 60],
+        Critical: [248, 113, 113],
+      };
+
+      damageReports.forEach(r => {
+        const descH = r.description  ? 5  : 0;
+        const recH  = r.recommendedRepair ? 5 : 0;
+        const cardH = 22 + descH + recH;
+        check(cardH + 4);
+
+        doc.setFillColor(248, 248, 248); doc.rect(ML, y, CW, cardH, 'F');
+        const [sr, sg, sb] = sevColor[r.severity];
+        doc.setFillColor(sr, sg, sb);   doc.rect(ML, y, 3, cardH, 'F');
+
+        let cy = y + 7;
+        setFont(9, 'bold', [20, 20, 20]);   doc.text(r.title, ML + 6, cy);
+        setFont(7, 'bold', [sr, sg, sb]);   doc.text(r.severity.toUpperCase(), PW - ML, cy, { align: 'right' });
+        cy += 5;
+        setFont(7, 'normal', [100, 100, 100]); doc.text(r.category, ML + 6, cy); cy += 5;
+
+        if (r.description) {
+          setFont(7.5, 'normal', [60, 60, 60]);
+          const lines = doc.splitTextToSize(r.description, CW - 14);
+          doc.text(lines[0], ML + 6, cy); cy += 5;
+        }
+        if (r.recommendedRepair) {
+          setFont(7.5, 'bold', [70, 70, 70]); doc.text('Rec: ', ML + 6, cy);
+          setFont(7.5, 'normal', [70, 70, 70]);
+          doc.text(r.recommendedRepair.substring(0, 70), ML + 17, cy);
+        }
+        if (r.additionalCost > 0) {
+          setFont(8.5, 'bold', [20, 20, 20]);
+          doc.text(fmtCurrency(r.additionalCost), PW - ML, y + cardH - 5, { align: 'right' });
+        }
+        y += cardH + 3;
+      });
+
+      // Total additional
+      doc.setFillColor(255, 248, 210); doc.rect(ML, y, CW, 10, 'F');
+      doc.setDrawColor(255, 215, 0);   doc.rect(ML, y, CW, 10, 'S');
+      setFont(8, 'normal', [80, 80, 80]);  doc.text('Total Additional Cost:', ML + 4, y + 6.5);
+      setFont(8, 'bold', [20, 20, 20]);    doc.text(fmtCurrency(additionalFromReports), PW - ML, y + 6.5, { align: 'right' });
+      y += 15;
+    }
+
+    // ── Quotation table ─────────────────────────────────────────────────────────
+    const validQ = quotationItems.filter(i => i.item);
+    if (validQ.length > 0) {
+      check(14 + validQ.length * 7 + 14);
+      setFont(7, 'bold', [80, 80, 80]); doc.text('ADDITIONAL QUOTATION', ML, y); y += 5;
+
+      // Header row
+      doc.setFillColor(25, 25, 25); doc.rect(ML, y, CW, 7, 'F');
+      setFont(6.5, 'bold', [255, 255, 255]);
+      const qH = [
+        { label: 'Description', x: ML + 2,   align: 'left'  as const },
+        { label: 'Qty',         x: ML + 98,   align: 'right' as const },
+        { label: 'Unit Price',  x: ML + 120,  align: 'right' as const },
+        { label: 'Labour',      x: ML + 145,  align: 'right' as const },
+        { label: 'Total',       x: PW - ML,   align: 'right' as const },
+      ];
+      qH.forEach(h => doc.text(h.label, h.x, y + 4.5, { align: h.align }));
+      y += 7;
+
+      validQ.forEach((row, idx) => {
+        const rowTot = row.qty * row.unitPrice + row.labourCost;
+        if (idx % 2 === 0) { doc.setFillColor(250, 250, 250); doc.rect(ML, y, CW, 7, 'F'); }
+        setFont(7.5, 'normal', [30, 30, 30]);
+        doc.text(row.item.substring(0, 45), ML + 2, y + 4.5);
+        doc.text(String(row.qty), ML + 98, y + 4.5, { align: 'right' });
+        setFont(7.5, 'normal', [30, 30, 30]);
+        doc.text(row.unitPrice.toLocaleString(), ML + 120, y + 4.5, { align: 'right' });
+        doc.text(row.labourCost.toLocaleString(), ML + 145, y + 4.5, { align: 'right' });
+        setFont(7.5, 'bold', [20, 20, 20]);
+        doc.text(rowTot.toLocaleString(), PW - ML, y + 4.5, { align: 'right' });
+        y += 7;
+      });
+      y += 5;
+    }
+
+    // ── Cost summary ────────────────────────────────────────────────────────────
+    check(32);
+    setFont(7, 'bold', [80, 80, 80]); doc.text('COST SUMMARY', ML, y); y += 5;
+    doc.setFillColor(248, 248, 248); doc.rect(ML, y, CW, 28, 'F');
+
+    const costRows: [string, string][] = [
+      ['Original Estimate', fmtCurrency(safeJob.originalCost)],
+      ['Additional (Parts)', fmtCurrency(quotationItems.reduce((s, i) => s + i.qty * i.unitPrice, 0))],
+      ['Additional (Labour)', fmtCurrency(quotationItems.reduce((s, i) => s + i.labourCost, 0))],
+    ];
+    costRows.forEach(([label, value], i) => {
+      setFont(8, 'normal', [80, 80, 80]);  doc.text(label, ML + 4, y + 7 + i * 7);
+      setFont(8, 'normal', [30, 30, 30]);  doc.text(value, PW - ML, y + 7 + i * 7, { align: 'right' });
+    });
+    y += 28;
+    doc.setFillColor(255, 215, 0); doc.rect(ML, y, CW, 10, 'F');
+    setFont(9, 'bold', [0, 0, 0]);
+    doc.text('GRAND TOTAL', ML + 4, y + 7);
+    doc.text(fmtCurrency(grandTotal), PW - ML, y + 7, { align: 'right' });
+    y += 16;
+
+    // ── Technician notes ────────────────────────────────────────────────────────
+    if (techNotes.trim()) {
+      check(18);
+      doc.setDrawColor(220, 220, 220); doc.line(ML, y, PW - ML, y); y += 6;
+      setFont(7, 'bold', [80, 80, 80]); doc.text('TECHNICIAN NOTES', ML, y); y += 5;
+      setFont(8, 'normal', [50, 50, 50]);
+      const noteLines = doc.splitTextToSize(techNotes, CW);
+      noteLines.forEach((line: string) => { check(5); doc.text(line, ML, y); y += 5; });
+      y += 3;
+    }
+
+    // ── Evidence photos ─────────────────────────────────────────────────────────
+    const imgs = mediaFiles.filter(f => f.type === 'image' && f.url?.startsWith('data:'));
+    if (imgs.length > 0) {
+      check(22);
+      doc.setDrawColor(220, 220, 220); doc.line(ML, y, PW - ML, y); y += 6;
+      setFont(7, 'bold', [80, 80, 80]); doc.text(`EVIDENCE PHOTOS (${imgs.length})`, ML, y); y += 5;
+      const PW3 = (CW - 6) / 3;
+      const PH3 = PW3 * 0.72;
+      imgs.slice(0, 9).forEach((f, i) => {
+        const col = i % 3; const row = Math.floor(i / 3);
+        if (col === 0 && row > 0) check(PH3 + 4);
+        const px = ML + col * (PW3 + 3); const py = y + row * (PH3 + 4);
+        try { doc.addImage(f.url, f.url.includes('/png') ? 'PNG' : 'JPEG', px, py, PW3, PH3); } catch { /* skip */ }
+      });
+      y += Math.ceil(Math.min(imgs.length, 9) / 3) * (PH3 + 4) + 6;
+    }
+
+    // ── Approval status ─────────────────────────────────────────────────────────
+    check(22);
+    doc.setDrawColor(220, 220, 220); doc.line(ML, y, PW - ML, y); y += 6;
+    setFont(7, 'bold', [80, 80, 80]); doc.text('CUSTOMER APPROVAL STATUS', ML, y); y += 5;
+    const statusLabel = APPROVAL_STEPS.find(s => s.key === approvalStatus)?.label || approvalStatus;
+    const statusClr: Record<ApprovalStatus, [number,number,number]> = {
+      not_sent: [120,120,120], sent: [59,130,246], viewed: [245,158,11],
+      approved: [34,197,94],  rejected: [239,68,68],
+    };
+    const [ar, ag, ab] = statusClr[approvalStatus];
+    doc.setFillColor(ar, ag, ab); doc.rect(ML, y, 3, 9, 'F');
+    doc.setFillColor(248, 248, 248); doc.rect(ML + 3, y, CW - 3, 9, 'F');
+    setFont(8, 'bold', [ar, ag, ab]); doc.text(statusLabel.toUpperCase(), ML + 7, y + 6);
+    if (approvalTimestamps[approvalStatus]) {
+      setFont(7, 'normal', [120, 120, 120]);
+      doc.text(fmtTime(approvalTimestamps[approvalStatus]!), PW - ML, y + 6, { align: 'right' });
+    }
+    y += 9;
+
+    // ── Footer ───────────────────────────────────────────────────────────────────
+    doc.setFillColor(10, 10, 10);
+    doc.rect(0, PH - 12, PW, 12, 'F');
+    setFont(6.5, 'normal', [120, 120, 120]);
+    doc.text(`Inspection ID: ${inspectionId || '—'}`, ML, PH - 5);
+    doc.text('ANURA TYRES PVT LTD — Confidential', PW / 2, PH - 5, { align: 'center' });
+    setFont(6.5, 'normal', [120, 120, 120]);
+    doc.text(`Generated: ${fmtTime(new Date().toISOString())}`, PW - ML, PH - 5, { align: 'right' });
+
+    doc.save(`AnuraTyres_Inspection_${safeJob.jobNumber || 'Report'}_${new Date().toISOString().split('T')[0]}.pdf`);
+  }, [job, damageReports, quotationItems, techNotes, mediaFiles, approvalStatus,
+      approvalTimestamps, inspectionId, additionalFromReports, grandTotal]);
 
   const copyLink = () => {
     navigator.clipboard.writeText(approvalLink).catch(() => {});
@@ -858,7 +1218,7 @@ export function DamageInspectionPage({ onBack, jobId: initJobId }: { onBack?: ()
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-neutral-700 text-neutral-300 rounded-lg hover:border-[#FFD700]/40 hover:text-white transition-colors">
               <Eye className="w-3.5 h-3.5" /> Preview
             </button>
-            <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-neutral-700 text-neutral-300 rounded-lg hover:border-neutral-500 hover:text-white transition-colors">
+            <button onClick={generatePDF} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-neutral-700 text-neutral-300 rounded-lg hover:border-[#FFD700]/40 hover:text-[#FFD700] transition-colors">
               <Printer className="w-3.5 h-3.5" /> Print Report
             </button>
           </div>
@@ -1020,8 +1380,25 @@ export function DamageInspectionPage({ onBack, jobId: initJobId }: { onBack?: ()
               <p className={`text-sm font-medium ${dragging ? 'text-[#FFD700]' : 'text-neutral-400'}`}>
                 {dragging ? 'Drop files here' : 'Drag & drop or click to upload'}
               </p>
-              <p className="text-xs text-neutral-600 mt-1">Images compressed & saved · Videos metadata only</p>
+              <p className="text-xs text-neutral-600 mt-1">Images &amp; videos compressed and saved · Any size supported</p>
             </div>
+
+            {/* Compression progress banner */}
+            {compressing && (
+              <div className="mb-3 px-4 py-3 rounded-xl bg-[#FFD700]/8 border border-[#FFD700]/20">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-[#FFD700]">Compressing "{compressing.name}"…</span>
+                  <span className="text-xs text-neutral-500 font-mono">{compressing.pct}%</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-neutral-800 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-[#FFD700] transition-all duration-300"
+                    style={{ width: `${compressing.pct}%` }}
+                  />
+                </div>
+                <p className="text-[11px] text-neutral-600 mt-1.5">Please wait — video plays in real-time during compression</p>
+              </div>
+            )}
 
             {mediaFiles.length > 0 && (
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
@@ -1408,7 +1785,7 @@ export function DamageInspectionPage({ onBack, jobId: initJobId }: { onBack?: ()
             {lightboxMedia.type === 'image' ? (
               <img src={lightboxMedia.url} alt={lightboxMedia.name} className="max-w-full max-h-[85vh] object-contain rounded-xl" />
             ) : (
-              <video src={lightboxMedia.url} controls autoPlay className="max-w-full max-h-[85vh] rounded-xl" />
+              <video src={lightboxMedia.url} controls className="max-w-full max-h-[85vh] rounded-xl" />
             )}
           </div>
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 px-4 py-2 rounded-full">
