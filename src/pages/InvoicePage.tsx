@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Plus, Search, X, Download, Edit2, Trash2, Eye,
   User, Car, FileText, CheckCircle, Clock, XCircle,
-  DollarSign, Printer, RefreshCw, Hash, Phone, Mail,
+  DollarSign, Printer, RefreshCw, Phone, Mail,
   MapPin, Calendar, Wrench, AlertTriangle, CreditCard,
-  Banknote, ChevronDown, ChevronLeft, ChevronRight, Package,
-  BarChart2,
+  Banknote, ChevronLeft, ChevronRight, Package,
+  BarChart2, Star, Check,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { getSessionUser } from '../lib/auth';
@@ -81,10 +81,11 @@ interface Invoice {
   paymentNotes:   string;
   paymentHistory: PaymentRecord[];
   // Meta
-  notes:          string;
-  createdBy?:     string;
-  createdAt?:     string;
-  updatedAt?:     string;
+  notes:               string;
+  createdBy?:          string;
+  createdAt?:          string;
+  updatedAt?:          string;
+  loyaltyPointsAwarded?: number;
 }
 
 interface LinkableJob {
@@ -165,8 +166,23 @@ function Badge({ status, type = 'inv' }: { status: string; type?: 'inv' | 'pay' 
   );
 }
 
+// ── Toast notification ────────────────────────────────────────────────────────
+function Toast({ message, type = 'success', onClose }: { message: string; type?: 'success'|'error'|'loyalty'; onClose: () => void }) {
+  useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
+  const cls = type === 'error'   ? 'bg-red-900 border-red-700 text-red-200'
+            : type === 'loyalty' ? 'bg-amber-900 border-amber-600 text-amber-200'
+            :                      'bg-emerald-900 border-emerald-700 text-emerald-200';
+  return (
+    <div className={`fixed bottom-4 right-4 z-[100] px-4 py-3 rounded-xl border text-sm font-medium shadow-2xl flex items-center gap-3 max-w-sm ${cls}`}>
+      {type === 'loyalty' ? <Star className="w-4 h-4 flex-shrink-0 fill-amber-400 text-amber-400" /> : <Check className="w-4 h-4 flex-shrink-0" />}
+      {message}
+      <button onClick={onClose} className="ml-auto opacity-70 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
+    </div>
+  );
+}
+
 // ── Reusable form inputs ──────────────────────────────────────────────────────
-const FL = ({ children }: { children: React.ReactNode }) => (
+const FL =({ children }: { children: React.ReactNode }) => (
   <label className="block text-[11px] font-bold text-neutral-400 uppercase tracking-wider mb-1.5">{children}</label>
 );
 const FI = (p: React.InputHTMLAttributes<HTMLInputElement>) => (
@@ -180,7 +196,26 @@ const FT = (p: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => (
 );
 
 // ── PDF Generator ─────────────────────────────────────────────────────────────
-function downloadPDF(inv: Invoice) {
+function loadLogo(): Promise<string> {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width  = img.naturalWidth  || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) { ctx.drawImage(img, 0, 0); resolve(canvas.toDataURL('image/png')); }
+        else resolve('');
+      } catch { resolve(''); }
+    };
+    img.onerror = () => resolve('');
+    img.src = '/logo.png';
+  });
+}
+
+async function downloadPDF(inv: Invoice, doPrint = false) {
+  const logo   = await loadLogo();
   const doc    = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const W      = doc.internal.pageSize.getWidth();
   const mg     = 15;
@@ -192,11 +227,13 @@ function downloadPDF(inv: Invoice) {
   // Header band
   doc.setFillColor(15,15,15); doc.rect(0,0,W,32,'F');
   doc.setFillColor(255,215,0); doc.rect(0,32,W,2,'F');
+  if (logo) doc.addImage(logo, 'PNG', mg, 6, 20, 20);
+  const tx = mg + (logo ? 22 : 0);
   doc.setTextColor(255,215,0); doc.setFontSize(22); doc.setFont('helvetica','bold');
-  doc.text('ANURA TYRES', mg, 14);
+  doc.text('ANURA TYRES', tx, 14);
   doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(180,180,180);
-  doc.text('(Pvt) Ltd — Your Trusted Tyre Specialists', mg, 21);
-  doc.text('278/2 High Level Rd, Pannipitiya  |  077 578 5785', mg, 27);
+  doc.text('(Pvt) Ltd — Your Trusted Tyre Specialists', tx, 21);
+  doc.text('278/2 High Level Rd, Pannipitiya  |  077 578 5785', tx, 27);
 
   doc.setFontSize(20); doc.setFont('helvetica','bold'); doc.setTextColor(255,215,0);
   doc.text('INVOICE', W-mg, 15, { align:'right' });
@@ -286,12 +323,12 @@ function downloadPDF(inv: Invoice) {
   sp(3); ln();
 
   // Totals
-  const tx = W-mg-60; const tv = W-mg-2;
+  const tlx = W-mg-60; const tv = W-mg-2;
   const tRow = (lbl:string, val:string, bold=false) => {
     doc.setFont('helvetica', bold?'bold':'normal');
     doc.setFontSize(bold?10:8.5);
     doc.setTextColor(bold?30:80, bold?30:80, bold?30:80);
-    doc.text(lbl, tx, y, {align:'right'});
+    doc.text(lbl, tlx, y, {align:'right'});
     doc.text(val, tv, y, {align:'right'});
     y += bold?7:5.5;
   };
@@ -299,15 +336,19 @@ function downloadPDF(inv: Invoice) {
   tRow('Labour',      `Rs ${inv.labourCharge.toLocaleString()}`);
   tRow('Subtotal',    `Rs ${inv.subtotal.toLocaleString()}`);
   if(inv.discount>0)
-    tRow(`Discount${inv.discountType==='percent'?` (${inv.discount}%)`:''}`, `−Rs ${inv.discountAmt.toLocaleString()}`);
+    tRow(`Discount${inv.discountType==='percent'?` (${inv.discount}%)`:''}`, `-Rs ${inv.discountAmt.toLocaleString()}`);
   if(inv.taxRate>0)
     tRow(`VAT/Tax (${inv.taxRate}%)`, `Rs ${inv.taxAmt.toLocaleString()}`);
-  doc.setDrawColor(255,215,0); doc.setLineWidth(0.4); doc.line(tx-10, y-1, tv, y-1);
+  sp(3);
+  doc.setDrawColor(255,215,0); doc.setLineWidth(0.5); doc.line(tlx-30, y, W-mg, y);
+  y += 4;
   tRow('TOTAL', `Rs ${inv.total.toLocaleString()}`, true);
 
   if(inv.paidAmount > 0) {
-    tRow('Paid', `−Rs ${inv.paidAmount.toLocaleString()}`);
-    doc.setDrawColor(200,200,200); doc.setLineWidth(0.2); doc.line(tx-10, y-1, tv, y-1);
+    tRow('Paid', `-Rs ${inv.paidAmount.toLocaleString()}`);
+    sp(2);
+    doc.setDrawColor(200,200,200); doc.setLineWidth(0.3); doc.line(tlx-30, y, W-mg, y);
+    y += 3;
     tRow('BALANCE DUE', `Rs ${inv.balance.toLocaleString()}`, true);
   }
   sp(4); ln();
@@ -325,7 +366,15 @@ function downloadPDF(inv: Invoice) {
   doc.text('Thank you for your business!  |  Payment due within 30 days.  |  E&OE.', W/2, fy+2, {align:'center'});
   doc.text('Anura Tyres (Pvt) Ltd  |  info@anuratyres.lk  |  www.anuratyres.lk', W/2, fy+7, {align:'center'});
 
-  doc.save(`${inv.invoiceNumber||'Invoice'}.pdf`);
+  if (doPrint) {
+    doc.autoPrint();
+    const blob = doc.output('blob');
+    const url  = URL.createObjectURL(blob);
+    const win  = window.open(url, '_blank');
+    if (win) win.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+  } else {
+    doc.save(`${inv.invoiceNumber||'Invoice'}.pdf`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -350,7 +399,12 @@ function PaymentModal({ invoice, onClose, onSaved }: {
         method: 'PATCH',
         body:   JSON.stringify({ paidAmount: (invoice.paidAmount || 0) + amt, paymentMethod: method, paymentNotes: notes, paymentDate: date }),
       });
-      onSaved({ paidAmount: (invoice.paidAmount || 0) + amt, paymentStatus: result.paymentStatus, balance: result.balance });
+      onSaved({
+        paidAmount: (invoice.paidAmount || 0) + amt,
+        paymentStatus: result.paymentStatus,
+        balance: result.balance,
+        ...(result.pointsEarned > 0 ? { loyaltyPointsAwarded: result.pointsEarned } : {}),
+      });
       onClose();
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
@@ -449,14 +503,14 @@ function PaymentModal({ invoice, onClose, onSaved }: {
 const FORM_STEPS = ['Job & Customer', 'Charges', 'Payment & Notes'];
 
 function InvoiceForm({ initial, onClose, onSaved }: {
-  initial?: Invoice; onClose: () => void; onSaved: () => void;
+  initial?: Invoice; onClose: () => void; onSaved: (pointsEarned?: number) => void;
 }) {
   const session   = getSessionUser();
   const isEdit    = !!initial?.id;
   const [step,    setStep]    = useState(0);
   const [data,    setData]    = useState<Invoice>(() =>
     initial
-      ? { paymentHistory: [], ...initial }
+      ? { ...initial, paymentHistory: initial.paymentHistory ?? [] }
       : blankInvoice(session?.branch && session.branch !== 'All Branches' ? session.branch : BRANCHES[0], session?.name || '')
   );
   const [jobs,      setJobs]      = useState<LinkableJob[]>([]);
@@ -534,10 +588,11 @@ function InvoiceForm({ initial, onClose, onSaved }: {
     try {
       if (isEdit) {
         await apiFetch(`/invoices/${data.id}`, { method:'PUT', body:JSON.stringify(data) });
+        onSaved(); onClose();
       } else {
-        await apiFetch('/invoices', { method:'POST', body:JSON.stringify(data) });
+        const result = await apiFetch('/invoices', { method:'POST', body:JSON.stringify(data) });
+        onSaved(result.pointsEarned ?? 0); onClose();
       }
-      onSaved(); onClose();
     } catch(e:any) {
       setErrors({_global: e.message});
     } finally { setSaving(false); }
@@ -903,6 +958,9 @@ function InvoiceDetail({ inv, onClose, onEdit, onStatusChange, onDelete, onPayme
             <button onClick={() => downloadPDF(inv)} className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-300 text-xs hover:text-white transition-colors">
               <Download className="w-3.5 h-3.5" /> PDF
             </button>
+            <button onClick={() => downloadPDF(inv, true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-300 text-xs hover:text-white transition-colors">
+              <Printer className="w-3.5 h-3.5" /> Print
+            </button>
             <button onClick={onEdit} className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-300 text-xs hover:text-white transition-colors">
               <Edit2 className="w-3.5 h-3.5" /> Edit
             </button>
@@ -926,6 +984,21 @@ function InvoiceDetail({ inv, onClose, onEdit, onStatusChange, onDelete, onPayme
               </div>
             ))}
           </div>
+
+          {/* Loyalty points awarded */}
+          {(inv.loyaltyPointsAwarded ?? 0) > 0 && (
+            <div className="flex items-center gap-3 px-4 py-3 bg-amber-500/10 border border-amber-500/25 rounded-xl">
+              <Star className="w-5 h-5 text-amber-400 fill-amber-400 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-bold text-amber-300">
+                  {inv.loyaltyPointsAwarded} loyalty point{inv.loyaltyPointsAwarded !== 1 ? 's' : ''} earned
+                </p>
+                <p className="text-xs text-amber-500/70 mt-0.5">
+                  Awarded for Rs {inv.total.toLocaleString()} spend · 1 pt per Rs 1,000
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Status changer */}
           <div className="flex items-center gap-3 p-4 bg-neutral-800/60 border border-neutral-700 rounded-xl">
@@ -1120,6 +1193,11 @@ export function InvoicePage() {
   const [editInv,   setEditInv]   = useState<Invoice|undefined>();
   const [detailInv, setDetailInv] = useState<Invoice|null>(null);
   const [payInv,    setPayInv]    = useState<Invoice|null>(null);
+  const [toast,     setToast]     = useState<{message:string;type:'success'|'error'|'loyalty'}|null>(null);
+
+  const showPointsToast = (pts: number) => {
+    if (pts > 0) setToast({ message: `${pts} loyalty point${pts !== 1 ? 's' : ''} earned!`, type: 'loyalty' });
+  };
 
   const fetch_ = useCallback(async () => {
     setLoading(true); setError(null);
@@ -1307,6 +1385,9 @@ export function InvoicePage() {
                         <button onClick={()=>downloadPDF(inv)} title="Download PDF" className="p-1.5 rounded-lg text-neutral-600 hover:text-[#FFD700] hover:bg-[#FFD700]/10 transition-colors">
                           <Download className="w-3.5 h-3.5" />
                         </button>
+                        <button onClick={()=>downloadPDF(inv, true)} title="Print" className="p-1.5 rounded-lg text-neutral-600 hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
+                          <Printer className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1322,7 +1403,7 @@ export function InvoicePage() {
         <InvoiceForm
           initial={editInv}
           onClose={()=>{setShowForm(false);setEditInv(undefined);}}
-          onSaved={fetch_}
+          onSaved={(pts)=>{ fetch_(); showPointsToast(pts ?? 0); }}
         />
       )}
       {detailInv && (
@@ -1339,9 +1420,15 @@ export function InvoicePage() {
         <PaymentModal
           invoice={payInv}
           onClose={()=>setPayInv(null)}
-          onSaved={patch=>{updatePayment(payInv.id!,patch);setPayInv(null);}}
+          onSaved={patch=>{
+            updatePayment(payInv.id!, patch);
+            setPayInv(null);
+            showPointsToast(patch.loyaltyPointsAwarded ?? 0);
+          }}
         />
       )}
+
+      {toast && <Toast message={toast.message} type={toast.type} onClose={()=>setToast(null)} />}
     </div>
   );
 }

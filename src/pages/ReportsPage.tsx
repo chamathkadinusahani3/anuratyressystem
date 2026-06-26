@@ -267,13 +267,32 @@ function exportCSV(filename: string, headers: string[], rows: (string|number)[][
   URL.revokeObjectURL(url);
 }
 
-function exportPDF(
+function loadLogo(): Promise<string> {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width  = img.naturalWidth  || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) { ctx.drawImage(img, 0, 0); resolve(canvas.toDataURL('image/png')); }
+        else resolve('');
+      } catch { resolve(''); }
+    };
+    img.onerror = () => resolve('');
+    img.src = '/logo.png';
+  });
+}
+
+async function exportPDF(
   branch: string, fromDate: string, toDate: string,
   overview: Overview | null,
   services: ServiceStat[],
   technicians: TechStat[],
   daily: DailyJob[],
 ) {
+  const logo = await loadLogo();
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const W   = doc.internal.pageSize.getWidth();
   const mg  = 15;
@@ -291,10 +310,12 @@ function exportPDF(
   // Header
   doc.setFillColor(15,15,15); doc.rect(0,0,W,30,'F');
   doc.setFillColor(255,215,0); doc.rect(0,30,W,1.5,'F');
+  if (logo) doc.addImage(logo, 'PNG', mg, 5, 18, 18);
+  const tx = mg + (logo ? 20 : 0);
   doc.setTextColor(255,215,0); doc.setFontSize(18); doc.setFont('helvetica','bold');
-  doc.text('ANURA TYRES', mg, 13);
+  doc.text('ANURA TYRES', tx, 13);
   doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(180,180,180);
-  doc.text('Garage Reports & Analytics', mg, 20); doc.text('(Pvt) Ltd', mg, 26);
+  doc.text('Garage Reports & Analytics', tx, 20); doc.text('(Pvt) Ltd', tx, 26);
   doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.setTextColor(255,215,0);
   doc.text('BUSINESS REPORT', W-mg, 15, {align:'right'});
   doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(200,200,200);

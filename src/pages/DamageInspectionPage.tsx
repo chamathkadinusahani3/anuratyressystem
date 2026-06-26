@@ -18,7 +18,7 @@ const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').re
 // ─────────────────────────────────────────────────────────────────────────────
 type Severity       = 'Low' | 'Medium' | 'High' | 'Critical';
 type ApprovalStatus = 'not_sent' | 'sent' | 'viewed' | 'approved' | 'rejected';
-type JobStatus      = 'Pending' | 'In Progress' | 'Paused' | 'Completed' | 'Waiting';
+type JobStatus      = 'Pending' | 'Assigned' | 'In Progress' | 'Paused' | 'Completed' | 'Waiting';
 
 interface JobSummary {
   jobNumber: string; customerName: string; vehicleReg: string;
@@ -93,6 +93,7 @@ function uid() { return Math.random().toString(36).slice(2, 10); }
 function mapJobStatus(raw: string): JobStatus {
   const m: Record<string, JobStatus> = {
     unassigned: 'Pending', pending: 'Pending',
+    assigned: 'Assigned',
     in_progress: 'In Progress', paused: 'Paused', on_hold: 'Paused',
     done: 'Completed', waiting: 'Waiting',
   };
@@ -215,6 +216,7 @@ function SeverityBadge({ severity }: { severity: Severity }) {
 function JobStatusBadge({ status }: { status: JobStatus }) {
   const map: Record<JobStatus, string> = {
     'Pending':     'bg-neutral-700 text-neutral-300 border-neutral-600',
+    'Assigned':    'bg-purple-500/20 text-purple-400 border-purple-500/30',
     'In Progress': 'bg-blue-500/20 text-blue-400 border-blue-500/30',
     'Paused':      'bg-orange-500/20 text-orange-400 border-orange-500/30',
     'Completed':   'bg-green-500/20 text-green-400 border-green-500/30',
@@ -1051,6 +1053,7 @@ export function DamageInspectionPage({ onBack, jobId: initJobId }: { onBack?: ()
 
     const statusColor: Record<string, string> = {
       unassigned:  'bg-neutral-700 text-neutral-300 border-neutral-600',
+      assigned:    'bg-purple-500/20 text-purple-400 border-purple-500/30',
       in_progress: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
       paused:      'bg-orange-500/20 text-orange-400 border-orange-500/30',
       done:        'bg-green-500/20 text-green-400 border-green-500/30',

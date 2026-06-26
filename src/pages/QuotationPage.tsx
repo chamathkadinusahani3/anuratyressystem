@@ -157,7 +157,26 @@ function compressImage(file: File, maxPx = 800): Promise<string> {
 }
 
 // ── PDF generator ─────────────────────────────────────────────────────────────
+function loadLogo(): Promise<string> {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width  = img.naturalWidth  || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) { ctx.drawImage(img, 0, 0); resolve(canvas.toDataURL('image/png')); }
+        else resolve('');
+      } catch { resolve(''); }
+    };
+    img.onerror = () => resolve('');
+    img.src = '/logo.png';
+  });
+}
+
 async function downloadPDF(q: Quotation) {
+  const logo     = await loadLogo();
   const doc      = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const W        = doc.internal.pageSize.getWidth();
   const margin   = 15;
@@ -171,14 +190,16 @@ async function downloadPDF(q: Quotation) {
   doc.rect(0, 0, W, 32, 'F');
   doc.setFillColor(255, 215, 0);
   doc.rect(0, 32, W, 2, 'F');
+  if (logo) doc.addImage(logo, 'PNG', margin, 6, 20, 20);
+  const tx = margin + (logo ? 22 : 0);
 
   doc.setTextColor(255, 215, 0);
   doc.setFontSize(22); doc.setFont('helvetica', 'bold');
-  doc.text('ANURA TYRES', margin, 14);
+  doc.text('ANURA TYRES', tx, 14);
   doc.setFontSize(9);  doc.setFont('helvetica', 'normal');
   doc.setTextColor(180, 180, 180);
-  doc.text('(Pvt) Ltd — Your Trusted Tyre Specialists', margin, 21);
-  doc.text('278/2 High Level Rd, Pannipitiya  |  077 578 5785', margin, 27);
+  doc.text('(Pvt) Ltd — Your Trusted Tyre Specialists', tx, 21);
+  doc.text('278/2 High Level Rd, Pannipitiya  |  077 578 5785', tx, 27);
 
   doc.setFontSize(18); doc.setFont('helvetica', 'bold');
   doc.setTextColor(255, 215, 0);
@@ -315,11 +336,13 @@ async function downloadPDF(q: Quotation) {
   };
   totRow('Subtotal',          `Rs ${q.subtotal.toLocaleString()}`);
   if (q.discount > 0)
-    totRow(`Discount${q.discountType === 'percent' ? ` (${q.discount}%)` : ''}`, `−Rs ${q.discountAmt.toLocaleString()}`);
+    totRow(`Discount${q.discountType === 'percent' ? ` (${q.discount}%)` : ''}`, `-Rs ${q.discountAmt.toLocaleString()}`);
   if (q.taxRate > 0)
     totRow(`Tax (${q.taxRate}%)`, `Rs ${q.taxAmt.toLocaleString()}`);
-  doc.setDrawColor(255, 215, 0); doc.setLineWidth(0.4);
-  doc.line(totX - 10, y - 1, totV, y - 1);
+  gap(3);
+  doc.setDrawColor(255, 215, 0); doc.setLineWidth(0.5);
+  doc.line(totX - 30, y, W - margin, y);
+  y += 4;
   totRow('TOTAL', `Rs ${q.total.toLocaleString()}`, true);
   gap(4); line();
 
