@@ -306,8 +306,8 @@ async function downloadPDF(inv: Invoice, doPrint = false) {
     doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(30,30,30);
     doc.text(line.description, cols[0], y+4);
     doc.text(String(line.quantity), cols[1]+5, y+4);
-    doc.text(`Rs ${line.unitPrice.toLocaleString()}`, cols[2], y+4);
-    doc.text(`Rs ${line.total.toLocaleString()}`, W-mg-2, y+4, {align:'right'});
+    doc.text(`Rs ${(line.unitPrice||0).toLocaleString()}`, cols[2], y+4);
+    doc.text(`Rs ${(line.total||0).toLocaleString()}`, W-mg-2, y+4, {align:'right'});
     y += 7;
   });
 
@@ -332,24 +332,24 @@ async function downloadPDF(inv: Invoice, doPrint = false) {
     doc.text(val, tv, y, {align:'right'});
     y += bold?7:5.5;
   };
-  tRow('Parts Total', `Rs ${inv.partsTotal.toLocaleString()}`);
-  tRow('Labour',      `Rs ${inv.labourCharge.toLocaleString()}`);
-  tRow('Subtotal',    `Rs ${inv.subtotal.toLocaleString()}`);
-  if(inv.discount>0)
-    tRow(`Discount${inv.discountType==='percent'?` (${inv.discount}%)`:''}`, `-Rs ${inv.discountAmt.toLocaleString()}`);
-  if(inv.taxRate>0)
-    tRow(`VAT/Tax (${inv.taxRate}%)`, `Rs ${inv.taxAmt.toLocaleString()}`);
+  tRow('Parts Total', `Rs ${(inv.partsTotal||0).toLocaleString()}`);
+  tRow('Labour',      `Rs ${(inv.labourCharge||0).toLocaleString()}`);
+  tRow('Subtotal',    `Rs ${(inv.subtotal||0).toLocaleString()}`);
+  if((inv.discount||0)>0)
+    tRow(`Discount${inv.discountType==='percent'?` (${inv.discount}%)`:''}`, `-Rs ${(inv.discountAmt||0).toLocaleString()}`);
+  if((inv.taxRate||0)>0)
+    tRow(`VAT/Tax (${inv.taxRate||0}%)`, `Rs ${(inv.taxAmt||0).toLocaleString()}`);
   sp(3);
   doc.setDrawColor(255,215,0); doc.setLineWidth(0.5); doc.line(tlx-30, y, W-mg, y);
   y += 4;
-  tRow('TOTAL', `Rs ${inv.total.toLocaleString()}`, true);
+  tRow('TOTAL', `Rs ${(inv.total||0).toLocaleString()}`, true);
 
   if(inv.paidAmount > 0) {
     tRow('Paid', `-Rs ${inv.paidAmount.toLocaleString()}`);
     sp(2);
     doc.setDrawColor(200,200,200); doc.setLineWidth(0.3); doc.line(tlx-30, y, W-mg, y);
     y += 3;
-    tRow('BALANCE DUE', `Rs ${inv.balance.toLocaleString()}`, true);
+    tRow('BALANCE DUE', `Rs ${(inv.balance||0).toLocaleString()}`, true);
   }
   sp(4); ln();
 
@@ -783,7 +783,7 @@ function InvoiceForm({ initial, onClose, onSaved }: {
                       <div className="col-span-5"><FI value={line.description} onChange={e=>setLine(idx,{description:e.target.value.toUpperCase()})} placeholder="E.G. BRAKE PADS FRONT" /></div>
                       <div className="col-span-2"><FI type="number" min={1} value={line.quantity} onChange={e=>setLine(idx,{quantity:Number(e.target.value)})} /></div>
                       <div className="col-span-2"><FI type="number" min={0} value={line.unitPrice} onChange={e=>setLine(idx,{unitPrice:Number(e.target.value)})} /></div>
-                      <div className="col-span-2 text-white text-xs font-medium text-right">{line.total.toLocaleString()}</div>
+                      <div className="col-span-2 text-white text-xs font-medium text-right">{(line.total||0).toLocaleString()}</div>
                       <div className="col-span-1 flex justify-center">
                         <button onClick={()=>removeLine(idx)} disabled={data.lines.length===1} className="p-1.5 text-neutral-600 hover:text-red-400 disabled:opacity-20 rounded-lg hover:bg-red-500/10 transition-colors"><X className="w-3.5 h-3.5" /></button>
                       </div>
@@ -973,10 +973,10 @@ function InvoiceDetail({ inv, onClose, onEdit, onStatusChange, onDelete, onPayme
           {/* Totals */}
           <div className="grid grid-cols-4 gap-2">
             {[
-              {label:'Parts',    val:`Rs ${inv.partsTotal.toLocaleString()}`,   color:'text-white'},
-              {label:'Labour',   val:`Rs ${inv.labourCharge.toLocaleString()}`, color:'text-white'},
-              {label:'Total',    val:`Rs ${inv.total.toLocaleString()}`,        color:'text-[#FFD700]'},
-              {label:'Balance',  val:`Rs ${inv.balance.toLocaleString()}`,      color: inv.balance>0?'text-red-400':'text-emerald-400'},
+              {label:'Parts',    val:`Rs ${(inv.partsTotal||0).toLocaleString()}`,   color:'text-white'},
+              {label:'Labour',   val:`Rs ${(inv.labourCharge||0).toLocaleString()}`, color:'text-white'},
+              {label:'Total',    val:`Rs ${(inv.total||0).toLocaleString()}`,        color:'text-[#FFD700]'},
+              {label:'Balance',  val:`Rs ${(inv.balance||0).toLocaleString()}`,      color: (inv.balance||0)>0?'text-red-400':'text-emerald-400'},
             ].map(c=>(
               <div key={c.label} className="bg-neutral-800/60 border border-neutral-700 rounded-xl p-3 text-center">
                 <div className={`font-bold text-sm ${c.color}`}>{c.val}</div>
@@ -994,7 +994,7 @@ function InvoiceDetail({ inv, onClose, onEdit, onStatusChange, onDelete, onPayme
                   {inv.loyaltyPointsAwarded} loyalty point{inv.loyaltyPointsAwarded !== 1 ? 's' : ''} earned
                 </p>
                 <p className="text-xs text-amber-500/70 mt-0.5">
-                  Awarded for Rs {inv.total.toLocaleString()} spend · 1 pt per Rs 1,000
+                  Awarded for Rs {(inv.total||0).toLocaleString()} spend · 1 pt per Rs 1,000
                 </p>
               </div>
             </div>
@@ -1069,12 +1069,12 @@ function InvoiceDetail({ inv, onClose, onEdit, onStatusChange, onDelete, onPayme
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-800/60">
-                  {inv.lines.filter(l=>l.description).map(line=>(
+                  {(inv.lines||[]).filter(l=>l.description).map(line=>(
                     <tr key={line.id} className="hover:bg-neutral-800/30">
                       <td className="px-3 py-2.5 text-white">{line.description}</td>
                       <td className="px-3 py-2.5 text-neutral-400">{line.quantity}</td>
-                      <td className="px-3 py-2.5 text-neutral-400">Rs {line.unitPrice.toLocaleString()}</td>
-                      <td className="px-3 py-2.5 text-white text-right font-medium">Rs {line.total.toLocaleString()}</td>
+                      <td className="px-3 py-2.5 text-neutral-400">Rs {(line.unitPrice||0).toLocaleString()}</td>
+                      <td className="px-3 py-2.5 text-white text-right font-medium">Rs {(line.total||0).toLocaleString()}</td>
                     </tr>
                   ))}
                   {inv.labourCharge > 0 && (
@@ -1092,9 +1092,9 @@ function InvoiceDetail({ inv, onClose, onEdit, onStatusChange, onDelete, onPayme
             {/* Totals breakdown */}
             <div className="space-y-1.5 px-2">
               {[
-                {l:'Subtotal',                                                v:`Rs ${inv.subtotal.toLocaleString()}`,    c:'text-neutral-300'},
-                inv.discountAmt>0 ? {l:`Discount${inv.discountType==='percent'?` (${inv.discount}%)`:''}`, v:`−Rs ${inv.discountAmt.toLocaleString()}`, c:'text-red-400'} : null,
-                inv.taxAmt>0     ? {l:`Tax (${inv.taxRate}%)`,              v:`Rs ${inv.taxAmt.toLocaleString()}`,      c:'text-blue-400'}    : null,
+                {l:'Subtotal',                                                v:`Rs ${(inv.subtotal||0).toLocaleString()}`,    c:'text-neutral-300'},
+                (inv.discountAmt||0)>0 ? {l:`Discount${inv.discountType==='percent'?` (${inv.discount}%)`:''}`, v:`−Rs ${(inv.discountAmt||0).toLocaleString()}`, c:'text-red-400'} : null,
+                (inv.taxAmt||0)>0     ? {l:`Tax (${inv.taxRate||0}%)`,       v:`Rs ${(inv.taxAmt||0).toLocaleString()}`,      c:'text-blue-400'}    : null,
               ].filter(Boolean).map((r,i)=>(
                 <div key={i} className="flex justify-between text-xs">
                   <span className="text-neutral-500">{r!.l}</span>
@@ -1103,18 +1103,18 @@ function InvoiceDetail({ inv, onClose, onEdit, onStatusChange, onDelete, onPayme
               ))}
               <div className="flex justify-between font-bold border-t border-neutral-700 pt-2 mt-2">
                 <span className="text-white">Total</span>
-                <span className="text-[#FFD700] text-base">Rs {inv.total.toLocaleString()}</span>
+                <span className="text-[#FFD700] text-base">Rs {(inv.total||0).toLocaleString()}</span>
               </div>
-              {inv.paidAmount>0 && (
+              {(inv.paidAmount||0)>0 && (
                 <div className="flex justify-between text-xs">
                   <span className="text-neutral-500">Paid ({inv.paymentMethod})</span>
-                  <span className="text-emerald-400 font-medium">Rs {inv.paidAmount.toLocaleString()}</span>
+                  <span className="text-emerald-400 font-medium">Rs {(inv.paidAmount||0).toLocaleString()}</span>
                 </div>
               )}
-              {inv.balance>0 && (
+              {(inv.balance||0)>0 && (
                 <div className="flex justify-between font-bold text-sm">
                   <span className="text-red-400">Balance Due</span>
-                  <span className="text-red-400">Rs {inv.balance.toLocaleString()}</span>
+                  <span className="text-red-400">Rs {(inv.balance||0).toLocaleString()}</span>
                 </div>
               )}
             </div>
@@ -1365,10 +1365,10 @@ export function InvoicePage() {
                     </td>
                     <td className="px-3 py-3.5"><Badge status={inv.status} type="inv" /></td>
                     <td className="px-3 py-3.5"><Badge status={inv.paymentStatus} type="pay" /></td>
-                    <td className="px-3 py-3.5 text-white font-bold whitespace-nowrap">Rs {inv.total.toLocaleString()}</td>
+                    <td className="px-3 py-3.5 text-white font-bold whitespace-nowrap">Rs {(inv.total||0).toLocaleString()}</td>
                     <td className="px-3 py-3.5 whitespace-nowrap">
-                      <span className={inv.balance>0?'text-red-400 font-medium':'text-emerald-400'}>
-                        Rs {inv.balance.toLocaleString()}
+                      <span className={(inv.balance||0)>0?'text-red-400 font-medium':'text-emerald-400'}>
+                        Rs {(inv.balance||0).toLocaleString()}
                       </span>
                     </td>
                     <td className="px-3 py-3.5" onClick={e=>e.stopPropagation()}>

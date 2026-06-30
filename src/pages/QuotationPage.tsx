@@ -4,7 +4,7 @@ import {
   Car, User, Shield, FileText, Image as ImageIcon,
   ChevronRight, ChevronLeft, AlertTriangle, CheckCircle,
   Clock, XCircle, DollarSign, Upload, RefreshCw,
-  Hash, Phone, Mail, MapPin, Calendar, Wrench, Package,
+  Hash, Phone, Mail, MapPin, Calendar, Wrench, Package, Receipt,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { getSessionUser } from '../lib/auth';
@@ -786,14 +786,29 @@ function QuotationForm({ initial, onClose, onSaved }: {
 // ═══════════════════════════════════════════════════════════════════════════════
 // DETAIL DRAWER
 // ═══════════════════════════════════════════════════════════════════════════════
-function QuotationDetail({ q, onClose, onEdit, onStatusChange, onDelete }: {
-  q:              Quotation;
-  onClose:        () => void;
-  onEdit:         () => void;
-  onStatusChange: (s: QStatus) => void;
-  onDelete:       () => void;
+function QuotationDetail({ q, onClose, onEdit, onStatusChange, onDelete, onConvertToInvoice }: {
+  q:                    Quotation;
+  onClose:              () => void;
+  onEdit:               () => void;
+  onStatusChange:       (s: QStatus) => void;
+  onDelete:             () => void;
+  onConvertToInvoice:   () => Promise<{ invoiceNumber?: string }>;
 }) {
-  const [delConfirm, setDelConfirm] = useState(false);
+  const [delConfirm,  setDelConfirm]  = useState(false);
+  const [converting,  setConverting]  = useState(false);
+  const [doneInvNum,  setDoneInvNum]  = useState<string | null>(null);
+
+  const handleConvert = async () => {
+    setConverting(true);
+    try {
+      const result = await onConvertToInvoice();
+      setDoneInvNum(result?.invoiceNumber || 'created');
+    } catch (e: any) {
+      alert(e.message || 'Failed to convert to invoice');
+    } finally {
+      setConverting(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-end md:items-center justify-end z-50 backdrop-blur-sm" onClick={onClose}>
@@ -817,6 +832,13 @@ function QuotationDetail({ q, onClose, onEdit, onStatusChange, onDelete }: {
             <button onClick={onEdit} className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-300 text-xs hover:text-white transition-colors">
               <Edit2 className="w-3.5 h-3.5" /> Edit
             </button>
+            {q.status !== 'Invoiced' && (
+              <button onClick={handleConvert} disabled={converting}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 border border-blue-500 rounded-lg text-white text-xs font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50">
+                {converting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Receipt className="w-3.5 h-3.5" />}
+                {converting ? 'Creating…' : 'Create Invoice'}
+              </button>
+            )}
             <button onClick={onClose} className="p-1.5 rounded-lg text-neutral-500 hover:text-white hover:bg-neutral-800 transition-colors">
               <X className="w-4 h-4" />
             </button>
@@ -824,6 +846,16 @@ function QuotationDetail({ q, onClose, onEdit, onStatusChange, onDelete }: {
         </div>
 
         <div className="p-6 space-y-6">
+          {/* Invoice created banner */}
+          {doneInvNum && (
+            <div className="p-3 bg-emerald-900/30 border border-emerald-700/50 rounded-xl flex items-center gap-3">
+              <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              <div>
+                <p className="text-emerald-400 text-sm font-semibold">Invoice created successfully!</p>
+                {doneInvNum !== 'created' && <p className="text-emerald-300/70 text-xs">Invoice #{doneInvNum} — find it in the Invoices section</p>}
+              </div>
+            </div>
+          )}
           {/* Status changer */}
           <div className="flex items-center gap-3 p-4 bg-neutral-800/60 border border-neutral-700 rounded-xl">
             <span className="text-neutral-400 text-xs font-bold uppercase tracking-wider">Status</span>
@@ -1035,6 +1067,56 @@ export function QuotationPage() {
     if (detailQ?.id === id) setDetailQ(d => d ? { ...d, status } : d);
   };
 
+  const convertToInvoice = async (q: Quotation): Promise<{ invoiceNumber?: string }> => {
+    const today = new Date().toISOString().split('T')[0];
+    const due   = new Date(Date.now() + 30 * 24 * 3600_000).toISOString().split('T')[0];
+    const lines = q.items.map(item => ({
+      id:          item.id,
+      description: item.description,
+      quantity:    item.quantity,
+      unitPrice:   item.unitPrice,
+      total:       item.total,
+    }));
+    const payload = {
+      branch:      q.branch,
+      invoiceDate: today,
+      dueDate:     due,
+      status:      'Issued',
+      createdBy:   session?.name || '',
+      jobRef:      q.quoteNumber || '',
+      customer: {
+        name:         q.customer.name,
+        phone:        q.customer.phone,
+        email:        q.customer.email,
+        address:      q.customer.address,
+        vehiclePlate: q.vehicle.plate,
+        vehicleMake:  q.vehicle.make,
+        vehicleModel: q.vehicle.model,
+      },
+      lines,
+      labourCharge:   0,
+      partsTotal:     q.subtotal,
+      subtotal:       q.subtotal,
+      discountType:   q.discountType,
+      discount:       q.discount,
+      discountAmt:    q.discountAmt,
+      taxRate:        q.taxRate,
+      taxAmt:         q.taxAmt,
+      total:          q.total,
+      notes:          q.notes,
+      paymentStatus:  'Unpaid',
+      paymentMethod:  'Cash',
+      paidAmount:     0,
+      balance:        q.total,
+      paymentDate:    '',
+      paymentNotes:   '',
+      paymentHistory: [],
+    };
+    const created = await apiFetch('/invoices', { method: 'POST', body: JSON.stringify(payload) });
+    await patchStatus(q.id!, 'Invoiced');
+    return created;
+  };
+
   const deleteQuote = async (id: string) => {
     await apiFetch(`/quotations/${id}`, { method: 'DELETE' });
     setQuotes(q => q.filter(x => x.id !== id));
@@ -1210,6 +1292,7 @@ export function QuotationPage() {
           onEdit={() => openEdit(detailQ)}
           onStatusChange={s => patchStatus(detailQ.id!, s)}
           onDelete={() => deleteQuote(detailQ.id!)}
+          onConvertToInvoice={() => convertToInvoice(detailQ)}
         />
       )}
     </div>

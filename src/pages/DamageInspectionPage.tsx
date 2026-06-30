@@ -24,6 +24,7 @@ interface JobSummary {
   jobNumber: string; customerName: string; vehicleReg: string;
   vehicleMake: string; vehicleModel: string; currentService: string;
   originalCost: number; status: JobStatus; technician: string; branch: string; createdAt: string;
+  phone?: string;
 }
 interface DamageReport {
   id: string; title: string; category: string; severity: Severity;
@@ -514,6 +515,9 @@ export function DamageInspectionPage({ onBack, jobId: initJobId }: { onBack?: ()
   const [copiedLink,     setCopied]         = useState(false);
   const [sendingApproval, setSending]       = useState(false);
   const [auditOpen,      setAuditOpen]      = useState(false);
+  const [smsPhone,       setSmsPhone]       = useState('');
+  const [sendingSms,     setSendingSms]     = useState(false);
+  const [smsResult,      setSmsResult]      = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -526,6 +530,9 @@ export function DamageInspectionPage({ onBack, jobId: initJobId }: { onBack?: ()
   const approvalLink    = inspectionId
     ? `https://anuratyres.lk/#/approve/${inspectionId}`
     : `https://anuratyres.lk/#/approve/pending`;
+
+  // Pre-fill SMS phone from job when job changes
+  useEffect(() => { if (job?.phone) setSmsPhone(job.phone); }, [job?.phone]);
 
   // ── Fetch jobs for selector ─────────────────────────────────────────────────
   useEffect(() => {
@@ -556,6 +563,7 @@ export function DamageInspectionPage({ onBack, jobId: initJobId }: { onBack?: ()
       technician:     j.staffName || j.staffId || '',
       branch:         j.branch || '',
       createdAt:      j.createdAt || new Date().toISOString(),
+      phone:          j.customerPhone || j.phone || '',
     });
 
     if (rawJob) setJob(buildSummary(rawJob));
@@ -755,6 +763,45 @@ export function DamageInspectionPage({ onBack, jobId: initJobId }: { onBack?: ()
     if (channel === 'whatsapp') {
       const msg = encodeURIComponent(`Hi ${job?.customerName}, we found additional issues on your vehicle ${job?.vehicleReg}. Please review and approve: ${approvalLink}`);
       window.open(`https://wa.me/?text=${msg}`, '_blank');
+    }
+  };
+
+  const sendViaSms = async () => {
+    const phone = smsPhone.trim();
+    if (!phone) return;
+    setSendingSms(true);
+    setSmsResult(null);
+    const customerName = job?.customerName || 'Customer';
+    const message = `Hi ${customerName}, additional damage was found on your vehicle${job?.vehicleReg ? ` (${job.vehicleReg})` : ''}. Please review and approve the repair estimate: ${approvalLink} - Anura Tyres`;
+    try {
+      const res = await fetch(`${API_URL}/crm?resource=sms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipients: [{ uid: job?.vehicleReg || 'customer', name: customerName, fullName: customerName, phone }],
+          message,
+          sentBy: 'Damage Inspection',
+          template: 'custom',
+        }),
+      });
+      const data = await res.json();
+      const sent = (data.successCount ?? 0) > 0;
+      if (sent) {
+        setSmsResult('ok');
+        const ts = new Date().toISOString();
+        setApproval('sent');
+        setTs(t => ({ ...t, sent: ts }));
+        advanceTimeline('Approval Sent');
+        logAudit(`Approval SMS sent to ${phone}`);
+      } else {
+        const errDetail = data.results?.[0]?.error;
+        setSmsResult(errDetail || 'fail');
+      }
+    } catch {
+      setSmsResult('fail');
+    } finally {
+      setSendingSms(false);
+      setTimeout(() => setSmsResult(null), 5000);
     }
   };
 
@@ -1650,6 +1697,42 @@ export function DamageInspectionPage({ onBack, jobId: initJobId }: { onBack?: ()
                   <Download className="w-4 h-4" />
                   Generate PDF
                 </button>
+              </div>
+
+              {/* ── SMS Section ── */}
+              <div className="pt-1">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500 mb-2">Send Approval via SMS</p>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-500" />
+                    <input
+                      type="tel"
+                      value={smsPhone}
+                      onChange={e => setSmsPhone(e.target.value)}
+                      placeholder="e.g. 0771234567"
+                      className="w-full pl-9 pr-3 py-2.5 bg-neutral-800 border border-neutral-700 rounded-lg text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600 transition-colors"
+                    />
+                  </div>
+                  <button
+                    onClick={sendViaSms}
+                    disabled={sendingSms || !smsPhone.trim()}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white font-bold text-sm rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0">
+                    {sendingSms ? <Loader2 className="w-4 h-4 animate-spin" /> : <Phone className="w-4 h-4" />}
+                    {sendingSms ? 'Sending…' : 'Send SMS'}
+                  </button>
+                </div>
+                {smsResult === 'ok' && (
+                  <div className="flex items-center gap-2 mt-2 text-xs text-green-400">
+                    <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                    SMS sent successfully to {smsPhone}
+                  </div>
+                )}
+                {smsResult && smsResult !== 'ok' && (
+                  <div className="flex items-center gap-2 mt-2 text-xs text-red-400">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                    {smsResult === 'fail' ? 'SMS delivery failed. Check the number and try again.' : smsResult}
+                  </div>
+                )}
               </div>
 
               {approvalStatus === 'sent' && (

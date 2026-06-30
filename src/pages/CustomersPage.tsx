@@ -391,13 +391,19 @@ function VehicleJobsPanel({ vehicle, bookings }: { vehicle: Vehicle; bookings: B
 // ─── Customer Detail Page ─────────────────────────────────────────────────────
 type DetailTab = 'overview' | 'vehicles' | 'bookings' | 'orders' | 'activity' | 'notes' | 'reminders' | 'invoices';
 
+const EMPTY_VEHICLE_FORM = {
+  plate: '', make: '', model: '', year: '', tyreSize: '',
+  insuranceExpiry: '', revenueExpiry: '', mileage: '',
+};
+
 function CustomerDetailPage({
-  customer, onBack, allTags, onTagsChange,
+  customer, onBack, allTags, onTagsChange, onVehicleAdded,
 }: {
   customer: Customer;
   onBack: () => void;
   allTags: Record<string, TagType[]>;
   onTagsChange: (t: Record<string, TagType[]>) => void;
+  onVehicleAdded?: (v: Vehicle) => void;
 }) {
   const [activeTab, setActiveTab] = useState<DetailTab>('overview');
   const [vehicleFilter, setVehicleFilter] = useState('all');
@@ -411,6 +417,10 @@ function CustomerDetailPage({
   const [invoicesLoading, setInvoicesLoading] = useState(false);
   const [actionMsg, setActionMsg] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [showAddVehicle, setShowAddVehicle] = useState(false);
+  const [vehicleForm, setVehicleForm] = useState(EMPTY_VEHICLE_FORM);
+  const [vehicleSaving, setVehicleSaving] = useState(false);
+  const [vehicleError, setVehicleError] = useState('');
 
   const sessionUser = getSessionUser();
   const vehicles  = customer.vehicles  ?? [];
@@ -537,6 +547,37 @@ function CustomerDetailPage({
       setActionMsg(data.success ? 'SMS sent!' : 'Failed to send');
     } catch { setActionMsg('Failed to send'); }
     finally { setActionLoading(false); setTimeout(() => setActionMsg(''), 3000); }
+  };
+
+  const handleAddVehicle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!vehicleForm.plate.trim()) { setVehicleError('Plate number is required'); return; }
+    setVehicleSaving(true); setVehicleError('');
+    try {
+      const res = await fetch(`${API_URL}/customers?uid=${encodeURIComponent(customer.uid)}&action=add-vehicle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(vehicleForm),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || 'Failed to add vehicle');
+      const newVehicle: Vehicle = {
+        id: data.id || Date.now().toString(),
+        plate: vehicleForm.plate.trim().toUpperCase(),
+        make: vehicleForm.make,
+        model: vehicleForm.model,
+        year: vehicleForm.year,
+        tyreSize: vehicleForm.tyreSize,
+        insuranceExpiry: vehicleForm.insuranceExpiry,
+        revenueExpiry: vehicleForm.revenueExpiry,
+        mileage: vehicleForm.mileage,
+      };
+      onVehicleAdded?.(newVehicle);
+      setShowAddVehicle(false);
+      setVehicleForm(EMPTY_VEHICLE_FORM);
+    } catch (err: any) {
+      setVehicleError(err.message || 'Failed to add vehicle');
+    } finally { setVehicleSaving(false); }
   };
 
   const TABS: { id: DetailTab; label: string; icon: any; count?: number }[] = [
@@ -759,21 +800,112 @@ function CustomerDetailPage({
       {/* ── VEHICLES ── */}
       {activeTab === 'vehicles' && (
         <div className="space-y-4">
-          {vehicles.length > 0 && bookings.length > 0 && (
-            <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3 flex items-center gap-2 flex-wrap">
-              <Filter className="w-3.5 h-3.5 text-neutral-500" />
-              <span className="text-xs font-bold text-neutral-500">Filter:</span>
-              {['all', ...vehicles.map(v => str(v.plate))].map(v => (
-                <button key={v} onClick={() => setVehicleFilter(v)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold font-mono transition-colors ${
-                    vehicleFilter === v ? 'bg-[#FFD700] text-black' : 'bg-neutral-800 text-neutral-400 border border-neutral-700'}`}>
-                  {v === 'all' ? 'All' : v}
+          {/* Toolbar: filter + add button */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {vehicles.length > 0 && bookings.length > 0 && (
+              <>
+                <Filter className="w-3.5 h-3.5 text-neutral-500" />
+                <span className="text-xs font-bold text-neutral-500">Filter:</span>
+                {['all', ...vehicles.map(v => str(v.plate))].map(v => (
+                  <button key={v} onClick={() => setVehicleFilter(v)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold font-mono transition-colors ${
+                      vehicleFilter === v ? 'bg-[#FFD700] text-black' : 'bg-neutral-800 text-neutral-400 border border-neutral-700'}`}>
+                    {v === 'all' ? 'All' : v}
+                  </button>
+                ))}
+              </>
+            )}
+            <button onClick={() => { setShowAddVehicle(true); setVehicleError(''); setVehicleForm(EMPTY_VEHICLE_FORM); }}
+              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-[#FFD700] text-black text-xs font-bold rounded-xl hover:bg-[#FFD700]/90 transition-colors">
+              <Plus className="w-3.5 h-3.5" /> Add Vehicle
+            </button>
+          </div>
+
+          {/* Add Vehicle modal */}
+          {showAddVehicle && (
+            <div className="bg-neutral-900 border border-[#FFD700]/30 rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Car className="w-4 h-4 text-[#FFD700]" /> Add Vehicle
+                </h3>
+                <button onClick={() => setShowAddVehicle(false)} className="p-1 rounded-lg text-neutral-500 hover:text-white transition-colors">
+                  <X className="w-4 h-4" />
                 </button>
-              ))}
+              </div>
+              <form onSubmit={handleAddVehicle} className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Plate — required */}
+                  <div className="md:col-span-2">
+                    <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">
+                      Plate Number <span className="text-red-400">*</span>
+                    </label>
+                    <input value={vehicleForm.plate} onChange={e => setVehicleForm(p => ({ ...p, plate: e.target.value }))}
+                      placeholder="e.g. WP-CAB-1234"
+                      className="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-xl text-white font-mono text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600 uppercase" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">Make</label>
+                    <input value={vehicleForm.make} onChange={e => setVehicleForm(p => ({ ...p, make: e.target.value }))}
+                      placeholder="e.g. Toyota"
+                      className="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-xl text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">Model</label>
+                    <input value={vehicleForm.model} onChange={e => setVehicleForm(p => ({ ...p, model: e.target.value }))}
+                      placeholder="e.g. Corolla"
+                      className="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-xl text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">Year</label>
+                    <input value={vehicleForm.year} onChange={e => setVehicleForm(p => ({ ...p, year: e.target.value }))}
+                      placeholder="e.g. 2019"
+                      className="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-xl text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">Tyre Size</label>
+                    <input value={vehicleForm.tyreSize} onChange={e => setVehicleForm(p => ({ ...p, tyreSize: e.target.value }))}
+                      placeholder="e.g. 185/65R15"
+                      className="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-xl text-white font-mono text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">Insurance Expiry</label>
+                    <input type="date" value={vehicleForm.insuranceExpiry} onChange={e => setVehicleForm(p => ({ ...p, insuranceExpiry: e.target.value }))}
+                      className="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-xl text-white text-sm focus:outline-none focus:border-[#FFD700]" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">Revenue Licence Expiry</label>
+                    <input type="date" value={vehicleForm.revenueExpiry} onChange={e => setVehicleForm(p => ({ ...p, revenueExpiry: e.target.value }))}
+                      className="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-xl text-white text-sm focus:outline-none focus:border-[#FFD700]" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">Mileage (km)</label>
+                    <input value={vehicleForm.mileage} onChange={e => setVehicleForm(p => ({ ...p, mileage: e.target.value }))}
+                      placeholder="e.g. 45000"
+                      className="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-xl text-white text-sm focus:outline-none focus:border-[#FFD700] placeholder:text-neutral-600" />
+                  </div>
+                </div>
+                {vehicleError && (
+                  <p className="text-red-400 text-xs flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />{vehicleError}
+                  </p>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <button type="submit" disabled={vehicleSaving || !vehicleForm.plate.trim()}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-[#FFD700] text-black font-bold text-sm rounded-xl hover:bg-[#FFD700]/90 transition-colors disabled:opacity-50">
+                    {vehicleSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    {vehicleSaving ? 'Saving…' : 'Save Vehicle'}
+                  </button>
+                  <button type="button" onClick={() => setShowAddVehicle(false)}
+                    className="px-4 py-2 bg-neutral-800 border border-neutral-700 text-neutral-300 font-bold text-sm rounded-xl hover:bg-neutral-700 transition-colors">
+                    Cancel
+                  </button>
+                </div>
+              </form>
             </div>
           )}
-          {vehicles.length === 0
-            ? <Empty icon={Car} label="No vehicles registered" sub="Customer hasn't added any vehicles yet" />
+
+          {vehicles.length === 0 && !showAddVehicle
+            ? <Empty icon={Car} label="No vehicles registered" sub="Click 'Add Vehicle' to register one from the admin side" />
             : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {vehicles.filter(v => vehicleFilter === 'all' || vehicleFilter === str(v.plate)).map(v => (
@@ -1207,6 +1339,11 @@ export function CustomersPage() {
         onBack={() => setSelectedCustomer(null)}
         allTags={allTags}
         onTagsChange={setAllTags}
+        onVehicleAdded={v => setSelectedCustomer(prev => prev ? {
+          ...prev,
+          vehicles: [...(prev.vehicles ?? []), v],
+          stats: { ...prev.stats, vehicleCount: (prev.stats.vehicleCount ?? 0) + 1 },
+        } : prev)}
       />
     );
   }
